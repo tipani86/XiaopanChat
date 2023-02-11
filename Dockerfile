@@ -15,4 +15,4 @@ python3 -m pip install --no-cache-dir -r /app/requirements.txt
 EOF
 
 WORKDIR /app
-CMD streamlit run app.py
+CMD streamlit run src/app.py
