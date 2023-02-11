@@ -14,7 +14,7 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 
 if "HISTORY" not in st.session_state:
     st.session_state.HISTORY = [
-        "The following is a conversation with an AI assistant called 小潘. The assistant is very capable, able to adjust to the human's various requests and provide helpful answers. It can even reply in different languages to match whatever language the latest prompt was asked in.",
+        "The following is a conversation with an AI assistant called 小潘. The assistant is very capable, able to adjust to the human's various requests and provide helpful answers. It can even reply in different languages to match the AI response to what human asked.",
     ]
 
 ### MAIN STREAMLIT UI STARTS HERE ###
