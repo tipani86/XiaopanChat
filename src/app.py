@@ -56,9 +56,8 @@ if clicked:
                 prompt=prompt,
                 temperature=0.9,
                 max_tokens=500,
-                top_p=1,
-                frequency_penalty=0.2,
-                presence_penalty=0.6,
+                frequency_penalty=1.0,
+                presence_penalty=1.0,
                 stop=[" 我:", " 小潘:"]
             )
         response_text = response["choices"][0]["text"]
