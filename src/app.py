@@ -53,7 +53,7 @@ st.markdown(f"""<style>
     }}
 </style>""", unsafe_allow_html=True)
 
-st.subheader("跟小潘说点什么吧！")
+st.subheader("跟小潘AI:robot_face:说点什么吧！")
 chat_box = st.container()
 prompt_box = st.empty()
 st.markdown(f"<p style='text-align: right'><small><i><font color=gray>Build: {build_date}</font></i></small></p>", unsafe_allow_html=True)
