@@ -106,10 +106,6 @@ if clicked:
             )
         response_text = response["choices"][0]["text"]
 
-        # Add a way to detect whether a long response is cut off and then splitting on the last line break
-        if len(response_text) > 200 and "\n" in response_text:
-            response_text = response_text[:response_text.rfind("\n")]
-
         # Update the history with the response
         st.session_state.HISTORY[-1] += response_text
 
