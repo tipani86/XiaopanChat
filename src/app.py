@@ -56,7 +56,10 @@ st.markdown(f"""<style>
 st.subheader("跟小潘AI:robot_face:说点什么吧！")
 chat_box = st.container()
 prompt_box = st.empty()
-st.markdown(f"<p style='text-align: right'><small><i><font color=gray>Build: {build_date}</font></i></small></p>", unsafe_allow_html=True)
+footer = st.container()
+with footer:
+    st.info("免责声明：聊天机器人的输出基于用海量互联网文本数据训练的大型语言模型，仅供娱乐。对于信息的准确性、完整性、及时性等，小潘AI不承担任何责任。", icon="ℹ️")
+    st.markdown(f"<p style='text-align: right'><small><i><font color=gray>Build: {build_date}</font></i></small></p>", unsafe_allow_html=True)
 
 # Initialize chat history element
 
