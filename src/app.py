@@ -23,6 +23,10 @@ if "HISTORY" not in st.session_state:
 
 DEMO_HISTORY_LIMIT = 10
 
+build_date = "unknown"
+if os.path.isfile("build_date.txt"):
+    with open("build_date.txt", "r") as f:
+        build_date = f.read()
 
 ### MAIN STREAMLIT UI STARTS HERE ###
 
@@ -50,9 +54,9 @@ st.markdown(f"""<style>
 </style>""", unsafe_allow_html=True)
 
 st.subheader("跟小潘说点什么吧！")
-
 chat_box = st.container()
 prompt_box = st.empty()
+st.markdown(f"<p style='text-align: right'><small><i><font color=gray>Build: {build_date}</font></i></small></p>", unsafe_allow_html=True)
 
 # Initialize chat history element
 
