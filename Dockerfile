@@ -12,7 +12,6 @@ WORKDIR /app
 RUN <<EOF
 set -e
 date > build_date.txt
-# python3 -m pip install --no-cache-dir --upgrade pip
 python3 -m pip install --no-cache-dir -r requirements.txt
 EOF
 

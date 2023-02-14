@@ -1,4 +1,3 @@
 openai
-websockets
+qrcode
 streamlit
-streamlit-ws-localstorage
