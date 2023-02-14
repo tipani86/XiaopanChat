@@ -1,23 +1,9 @@
 import os
+import time
+import json
 import openai
+import requests
 import streamlit as st
-
-# Load OpenAI related settings
-
-for key in ["OPENAI_API_KEY", "OPENAI_ORG_ID"]:
-    if key not in os.environ:
-        st.error(f"Please set the {key} environment variable.")
-        st.stop()
-
-openai.organization = os.getenv("OPENAI_ORG_ID")
-openai.api_key = os.getenv("OPENAI_API_KEY")
-
-# Maintain a chat history in session state
-
-if "HISTORY" not in st.session_state:
-    st.session_state.HISTORY = [
-        "You are an AI assistant called 小潘. You're very capable, able to adjust to the various messages from a human and provide helpful replies in the same language as the question was asked in. Below is the chat log:",
-    ]
 
 # Global variables
 
@@ -27,6 +13,29 @@ build_date = "unknown"
 if os.path.isfile("build_date.txt"):
     with open("build_date.txt", "r") as f:
         build_date = f.read()
+
+TIMEOUT = 15
+N_RETRIES = 3
+COOLDOWN = 2
+BACKOFF = 1.5
+
+# Load OpenAI related settings
+
+for key in ["OPENAI_API_KEY", "OPENAI_ORG_ID", "WX_LOGIN_SECRET"]:
+    if key not in os.environ:
+        st.error(f"Please set the {key} environment variable.")
+        st.stop()
+
+openai.organization = os.getenv("OPENAI_ORG_ID")
+openai.api_key = os.getenv("OPENAI_API_KEY")
+
+
+# Maintain a chat history in session state
+
+if "HISTORY" not in st.session_state:
+    st.session_state.HISTORY = [
+        "You are an AI assistant called 小潘. You're very capable, able to adjust to the various messages from a human and provide helpful replies in the same language as the question was asked in. Below is the chat log:",
+    ]
 
 ### MAIN STREAMLIT UI STARTS HERE ###
 
@@ -53,6 +62,7 @@ st.markdown(f"""<style>
     }}
 </style>""", unsafe_allow_html=True)
 
+# Main layout
 st.subheader("跟小潘AI:robot_face:说点什么吧！")
 chat_box = st.container()
 prompt_box = st.empty()
@@ -81,7 +91,6 @@ with chat_box:
             clicked = st.form_submit_button("发送")
 
 # If the user has submitted a prompt, we update the history, generate a response and show the response in chat box
-
 if clicked:
     if len(human_prompt) == 0:
         st.warning("请输入内容")
@@ -95,18 +104,27 @@ if clicked:
         contents = line.split("Human: ")[1]
         st.markdown(f"> `我`: {contents}")
 
-        # Call the OpenAI API to generate a response
+        # Call the OpenAI API to generate a response with retry, cooldown and backoff
         prompt = "\n".join(st.session_state.HISTORY)
         with st.spinner("`小潘正在输入中...`"):
-            response = openai.Completion.create(
-                model="text-davinci-003",
-                prompt=prompt,
-                temperature=0.5,
-                max_tokens=500,
-                frequency_penalty=1.0,
-                presence_penalty=1.0,
-                stop=[" 我:", " 小潘:"]
-            )
+            for i in range(N_RETRIES):
+                try:
+                    response = openai.Completion.create(
+                        model="text-davinci-003",
+                        prompt=prompt,
+                        temperature=0.5,
+                        max_tokens=500,
+                        frequency_penalty=1.0,
+                        presence_penalty=1.0,
+                        stop=[" 我:", " 小潘:"]
+                    )
+                    break
+                except Exception as e:
+                    if i == N_RETRIES - 1:
+                        st.error(f"小潘AI出错了: {e}")
+                        st.stop()
+                    else:
+                        time.sleep(COOLDOWN * BACKOFF ** i)
         response_text = response["choices"][0]["text"]
 
         # Update the history with the response
