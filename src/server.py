@@ -34,40 +34,52 @@ def handle_wx_login():
                     res['message'] = f"Invalid request: {key} has empty value"
                     return jsonify(res)
                 
-            user_id = form_data['userId']
-            temp_user_id = form_data['tempUserId']
-            nickname = form_data['nickname']
-            avatar_url = form_data['avatar']
-            ip_address = form_data['ipAddr']
+            user_id = str(form_data['userId'])
+            temp_user_id = str(form_data['tempUserId'])
+            nickname = str(form_data['nickname'])
+            avatar_url = str(form_data['avatar'])
+            ip_address = str(form_data['ipAddr'])
 
-            table_name = "users"
+            # Step 1: First check if the temp_user_id exists in the tempUserIds table
+
+            table_name = "tempUserIds"
             if DEBUG:
                 table_name = table_name + "Test"
 
-            # Check if user_id already exists, if so, load the entity
-
-            query_filter = f"PartitionKey eq @channel and RowKey eq @user_id"
+            query_filter = f"PartitionKey eq @channel and RowKey eq @temp_user_id"
             select = None
-            parameters = {'channel': "wx_user", 'user_id': user_id}
+            parameters = {'channel': "wx_user", 'temp_user_id': temp_user_id}
 
-            query_res = azure_table_op.query_entities(query_filter, select, parameters, table_name)
+            table_res = azure_table_op.query_entities(query_filter, select, parameters, table_name)
 
-            if query_res['status'] != 0:
-                res['errcode'] = query_res['status']
-                res['message'] = f"Failed to query entities: {query_res['message']}"
+            if table_res['status'] != 0:
+                res['errcode'] = table_res['status']
+                res['message'] = f"Failed to query entities: {table_res['message']}"
                 return jsonify(res)
+            
+            # If temp_user_id is not found, return error because the POST request is not expected
 
-            # If user is not found, create a new user
-            if len(query_res['data']) <= 0:
-                entity = {
-                    'PartitionKey': "wx_user",
-                    'RowKey': user_id,
-                    'nickname': user_id if len(nickname) <= 0 else nickname,
-                    'avatar_url': avatar_url,
-                    'ip_address': ip_address,
-                    'n_tokens': 0,
-                }
-                azure_table_op.update_entities(entity, table_name)
+            if len(table_res['data']) <= 0:
+                res['errcode'] = 2
+                res['message'] = f"Invalid request: temp_user_id {temp_user_id} not found"
+                return jsonify(res)
+            
+            # Step 2: If the temp_user_id is found, add the user_id to the tempUserId entry
+
+            entity = table_res['data'][0]
+            entity['user_id'] = user_id
+            entity['data'] = json.dumps({
+                'nickname': nickname,
+                'avatar_url': avatar_url,
+                'ip_address': ip_address
+            })
+
+            table_res = azure_table_op.update_entities(entity, table_name)
+
+            if table_res['status'] != 0:
+                res['errcode'] = table_res['status']
+                res['message'] = f"Failed to update entities: {table_res['message']}"
+                return jsonify(res)
 
         except:
             res['errcode'] = 2

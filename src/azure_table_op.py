@@ -198,7 +198,7 @@ class AzureTableOp:
     ) -> dict:
         decompressed_entity = {}
         for key in entity.keys():
-            if entity[key].startswith("gzip_"):
+            if type(entity[key]) == str and entity[key].startswith("gzip_"):
                 decompressed_data = zlib.decompress(
                     eval(entity[key].split("gzip_", 1)[1])).decode('utf-8')
                 decompressed_entity[key] = decompressed_data
@@ -216,7 +216,7 @@ class AzureTableOp:
             'RowKey': entity['RowKey'],
         }
         for key in entity.keys():
-            if key not in ignore_keys:
+            if key not in ignore_keys and type(entity[key]) == str:
                 if entity[key].startswith("gzip_"):
                     compressed_entity[key] = entity[key]
                 else:
