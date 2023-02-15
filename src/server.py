@@ -1,7 +1,7 @@
 import os
 import json
 import traceback
-from flask import Flask, request
+from flask import Flask, request, jsonify
 from azure_table_op import AzureTableOp
 
 DEBUG = True
@@ -17,7 +17,7 @@ app = Flask(__name__)
 
 @app.route('/wx_login_callback', methods=['POST'])
 def handle_wx_login():
-    res = {'errcode': 0, 'message': 'success'}
+    res = {'errcode': 0, 'message': "成功"}
     if request.method == "POST":
         try:
             form_data = request.form.to_dict()
@@ -28,11 +28,11 @@ def handle_wx_login():
                 if key not in form_data:
                     res['errcode'] = 2
                     res['message'] = f"Invalid request: key {key} is missing"
-                    return json.dumps(res)
+                    return jsonify(res)
                 if len(form_data[key]) == 0:
                     res['errcode'] = 2
                     res['message'] = f"Invalid request: {key} has empty value"
-                    return json.dumps(res)
+                    return jsonify(res)
                 
             user_id = form_data['userId']
             temp_user_id = form_data['tempUserId']
@@ -55,7 +55,7 @@ def handle_wx_login():
             if query_res['status'] != 0:
                 res['errcode'] = query_res['status']
                 res['message'] = f"Failed to query entities: {query_res['message']}"
-                return json.dumps(res)
+                return jsonify(res)
 
             # If user is not found, create a new user
             if len(query_res['data']) <= 0:
@@ -72,7 +72,7 @@ def handle_wx_login():
         except:
             res['errcode'] = 2
             res['message'] = f"Invalid request: {traceback.format_exc()}"
-    return json.dumps(res)
+    return jsonify(res)
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=5000, threaded=True, debug=DEBUG)
