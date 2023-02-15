@@ -2,8 +2,8 @@
 
 set -e
 
-git archive -v -o __app.tar.gz --format=tar.gz HEAD
-docker build -t tipani86/xiaopan-chat:latest -f Dockerfile .
+git archive -v -o __code.tar.gz --format=tar.gz HEAD
+docker build -t tipani86/xiaopan-chat:latest -f dockerfiles/app.dockerfile .
 
 # If supplied with --push argument, do a docker push
 
