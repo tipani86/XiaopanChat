@@ -10,10 +10,15 @@ build_date = "unknown"
 if os.path.isfile("build_date.txt"):
     with open("build_date.txt", "r") as f:
         build_date = f.read()
-print(f"Build: {build_date}")
 
 azure_table_op = AzureTableOp()
 app = Flask(__name__)
+
+@app.route('/')
+def index():
+    return jsonify({
+        'build': build_date
+    })
 
 @app.route('/wx_login_callback', methods=['POST'])
 def handle_wx_login():
