@@ -6,6 +6,7 @@ import traceback
 from azure.data.tables import TableClient, UpdateMode
 from azure.core.exceptions import ResourceExistsError, HttpResponseError, ResourceNotFoundError
 
+
 class AzureTableOp:
     def __init__(
         self,
@@ -19,13 +20,12 @@ class AzureTableOp:
         self.connection_string = os.getenv(BLOB_KEY)
 
     def create_entity(
-        self, 
+        self,
         entity,
         table_name: str = "test"
     ) -> dict:
-
         '''create a new entity, if you cannot make sure whether it exists, you can use update update_entities function.'''
-    
+
         with TableClient.from_connection_string(self.connection_string, table_name) as table_client:
             for _ in range(self.NETWORK_RETRY_NUM):
                 res = {'status': 0, 'message': "Success"}
@@ -55,7 +55,7 @@ class AzureTableOp:
             return res
 
     def delete_entity(
-        self, 
+        self,
         entity,
         table_name: str = "test"
     ) -> dict:
@@ -79,7 +79,7 @@ class AzureTableOp:
             # print("Successfully deleted!")
 
     def list_all_entities(
-        self, 
+        self,
         table_name: str = "test"
     ) -> dict:
         '''return list of all entities'''
@@ -102,7 +102,7 @@ class AzureTableOp:
             return res
 
     def query_entities(
-        self, 
+        self,
         query_filter: str,
         select: list,
         parameters: dict,
@@ -132,11 +132,11 @@ class AzureTableOp:
             res['status'] = 1
             res['message'] = f"Error: entity querying failed after {self.NETWORK_RETRY_NUM} attempts: {res['message']}"
             return res
-    
+
     def get_entity(
-        self, 
-        partition_key: str, 
-        row_key: str, 
+        self,
+        partition_key: str,
+        row_key: str,
         table_name: str = "test"
     ) -> dict:
         '''get one entity based on partition_key and row_key.'''
@@ -160,7 +160,7 @@ class AzureTableOp:
             return res
 
     def update_entities(
-        self, 
+        self,
         entity,
         table_name: str = "test"
     ) -> dict:
@@ -193,7 +193,7 @@ class AzureTableOp:
             return res
 
     def _decompress_entity(
-        self, 
+        self,
         entity
     ) -> dict:
         decompressed_entity = {}
@@ -207,7 +207,7 @@ class AzureTableOp:
         return decompressed_entity
 
     def _compress_entity(
-        self, 
+        self,
         entity
     ) -> dict:
         ignore_keys = ["PartitionKey", "RowKey"]
@@ -224,6 +224,106 @@ class AzureTableOp:
 
         payload_size = len(json.dumps(compressed_entity).encode('utf-8'))
         return compressed_entity
+
+
+class User:
+    def __init__(
+        self,
+        channel: str,
+        user_id: str,
+        db_op,
+        table_name: str = "users"
+    ) -> None:
+
+        # Initialize the basic info
+        self.channel = channel
+        self.user_id = user_id
+        self.db_op = db_op
+        self.table_name = table_name
+
+    def sync_from_db(self) -> dict:
+        res = {'status': 0, 'message': "Success"}
+
+        # Fetch the remaining info from database
+
+        query_filter = f"PartitionKey eq @channel and RowKey eq @user_id"
+        select = None
+        parameters = {'channel': self.channel, 'user_id': self.user_id}
+
+        db_res = self.db_op.query_entities(query_filter, select, parameters, self.table_name)
+        if db_res['status'] != 0:
+            return db_res
+
+        if len(db_res['data']) <= 0:
+            res['status'] = 3
+            res['message'] = f"Channel {self.channel} user {self.user_id} not found in database"
+            return res
+
+        elif len(db_res['data']) > 1:
+            res['status'] = 2
+            res['message'] = f"Possible data error: more than one entry found with type {self.channel} and user_id {self.user_id}"
+            return res
+
+        else:
+            # Load rest of the info
+            entity = db_res['data'][0]
+            self.n_tokens = entity['n_tokens']
+            self.nickname = entity['nickname']
+            self.avatar_url = entity['avatar_url']
+            self.ip_history = json.loads(entity['ip_history'])
+
+        return res
+
+    def sync_to_db(self) -> dict:
+        entity = {
+            "PartitionKey": self.channel,
+            "RowKey": self.user_id,
+            "n_tokens": self.n_tokens,
+            'nickname': self.nickname,
+            'avatar_url': self.avatar_url,
+            'ip_history': json.dumps(self.ip_history),
+        }
+
+        return self.db_op.update_entities(entity, self.table_name)
+
+    def initialize_on_db(
+        self,
+        user_data: dict,
+        initial_token_amount: int
+    ) -> dict:
+
+        entity = {
+            "PartitionKey": self.channel,
+            "RowKey": self.user_id,
+            "n_tokens": initial_token_amount,
+            'nickname': self.user_id[:10] if len(user_data['nickname']) <= 0 else user_data['nickname'],
+            'avatar_url': user_data['avatar_url'],
+            'ip_history': json.dumps(
+                [(user_data['timestamp'], user_data['ip_address'])]
+            )
+        }
+
+        db_res = self.db_op.update_entities(entity, self.table_name)
+
+        if db_res['status'] != 0:
+            return db_res
+
+        return self.sync_from_db()
+
+    def consume_token(self) -> dict:
+        res = {'status': 0, 'message': "Success"}
+        if self.n_tokens <= 0:
+            res['status'] = 2
+            res['message'] = f"User {self.user_id} has no tokens left"
+            return res
+        self.n_tokens -= 1
+        return self.sync_to_db()
+
+    def update_ip_history(self, user_data: dict) -> dict:
+        self.ip_history.append((user_data['timestamp'], user_data['ip_address']))
+        # We only want to retain 10 latest ip addresses
+        self.ip_history = self.ip_history[-10:]
+        return self.sync_to_db()
 
 
 if __name__ == "__main__":

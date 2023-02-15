@@ -4,10 +4,12 @@ import json
 import openai
 import qrcode
 import requests
+import datetime
+import calendar
 import numpy as np
 import streamlit as st
 from streamlit_modal import Modal
-from azure_table_op import AzureTableOp
+from utils import AzureTableOp, User
 
 DEBUG = True
 
@@ -21,6 +23,8 @@ for key in ["OPENAI_API_KEY", "OPENAI_ORG_ID", "WX_LOGIN_SECRET", "AZURE_STORAGE
 # Set global variables
 
 DEMO_HISTORY_LIMIT = 10
+NEW_USER_FREE_TOKENS = 25
+FREE_TOKENS_PER_REFERRAL = 10
 
 build_date = "unknown"
 if os.path.isfile("build_date.txt"):
@@ -66,9 +70,11 @@ st.set_page_config(
     page_icon="https://openaiapi-site.azureedge.net/public-assets/d/377f6a405e/favicon.svg",
 )
 
+
 @st.cache_resource
 def get_table_op():
     return AzureTableOp()
+
 
 azure_table_op = get_table_op()
 
@@ -91,13 +97,15 @@ st.markdown(f"""<style>
 
 header = st.container()
 
+login_popup = Modal(title=None, key="login_popup", padding=40, max_width=204)
+loading_popup = Modal(title=None, key="loading_popup", padding=40, max_width=204)
+
 if "USER_DATA" not in st.session_state:
 
-    login_popup = Modal(title=None, key="login_popup", padding=40, max_width=204)
     with header:
         col1, col2 = st.columns([9, 1])
         with col1:
-            st.write(":warning: 公测试用版，限10条消息，登录后可获取更多聊天资格哦!")
+            st.markdown("<small>公测试用版，限10条来回消息，登录后可获取更多聊天资格哦!</small>", unsafe_allow_html=True)
         with col2:
             start_login = st.button("登录")
         if start_login:
@@ -116,6 +124,7 @@ if "USER_DATA" not in st.session_state:
                             break
                         except Exception as e:
                             if i == N_RETRIES - 1:
+                                login_popup.close()
                                 st.error(f"小潘AI出错了: {e}")
                                 st.stop()
                             else:
@@ -123,13 +132,14 @@ if "USER_DATA" not in st.session_state:
 
                     # Parse results
                     if r.status_code != 200:
-                        st.error(f"微信登陆出错了: {r.text}")
+                        login_popup.close()
+                        st.error(f"微信登录出错了: {r.text}")
                         st.stop()
 
                     wx_login_res = r.json()
-                    # st.json(wx_login_res, expanded=False)
                     if wx_login_res['errcode'] != 0:
-                        st.error(f"微信登陆出错了: {wx_login_res['message']}")
+                        login_popup.close()
+                        st.error(f"微信登录出错了: {wx_login_res['message']}")
                         st.stop()
 
                     # (Re-)initiate an entry for this ID in the temp table
@@ -145,6 +155,7 @@ if "USER_DATA" not in st.session_state:
                     table_res = azure_table_op.update_entities(entity, table_name)
 
                     if table_res['status'] != 0:
+                        login_popup.close()
                         st.error(f"无法更新用户表: {table_res['message']}")
                         st.stop()
 
@@ -154,40 +165,87 @@ if "USER_DATA" not in st.session_state:
                     qr_img = np.asarray(qr_img) * 255   # The values are 0/1, we need to make it visible
                     st.image(qr_img, caption="请使用微信扫描二维码登录", output_format="PNG")
 
-                # Poll the login status every 5 seconds and close the popup when login is successful
+                # Poll the login status every 3 seconds and close the popup when login is successful
 
                 while True:
-                    time.sleep(5)
+                    time.sleep(3)
 
                     query_filter = f"PartitionKey eq @channel and RowKey eq @user_id"
                     select = None
                     parameters = {'channel': "wx_user", 'user_id': temp_user_id}
 
                     table_res = azure_table_op.query_entities(query_filter, select, parameters, table_name)
-
                     if table_res['status'] != 0:
+                        login_popup.close()
                         st.error(f"无法获取用户表: {table_res['message']}")
                         st.stop()
 
-                    if 'data' in table_res['data'][0] and table_res['data'][0]['data'] is not None:
+                    entity = table_res['data'][0]
+
+                    if 'data' in entity and entity['data'] is not None:
                         break
 
-                user_id = table_res['data'][0]['user_id']
-                user_data = json.loads(table_res['data'][0]['data'])
+                d = datetime.datetime.now()
+                timestamp = calendar.timegm(d.timetuple())
+                user_id = entity['user_id']
+                user_data = json.loads(entity['data'])
                 st.session_state['USER_DATA'] = {
                     'user_id': user_id,
+                    'timestamp': timestamp,
                 }
                 st.session_state['USER_DATA'].update(user_data)
 
-                login_popup.close()
+                # Delete the temp entry from the table
+                table_res = azure_table_op.delete_entity(entity, table_name)
+
+            login_popup.close()
 
 else:
+    if "USER" not in st.session_state:
+
+        with loading_popup.container():
+            with st.spinner("正在登录..."):
+                # Build user object from temporary login data. The object is easier to manipulate later on.
+                user_id = st.session_state.USER_DATA['user_id']
+                table_name = "users"
+                if DEBUG:
+                    table_name = table_name + "Test"
+                st.session_state.USER = User(
+                    channel="wx_user",
+                    user_id=user_id,
+                    db_op=azure_table_op,
+                    table_name=table_name
+                )
+
+                action_res = st.session_state.USER.sync_from_db()
+                if action_res['status'] == 3:   # User not found, new user
+                    action_res = st.session_state.USER.initialize_on_db(
+                        st.session_state.USER_DATA,
+                        NEW_USER_FREE_TOKENS
+                    )
+                    if action_res['status'] != 0:
+                        st.error(f"无法初始化用户信息: {action_res['message']}")
+                        st.stop()
+                else:
+                    # Update ip history from USER_DATA
+                    action_res = st.session_state.USER.update_ip_history(st.session_state.USER_DATA)
+                    if action_res['status'] != 0:
+                        st.error(f"无法更新IP地址: {action_res['message']}")
+                        st.stop()
+
+        loading_popup.close()
+
     with header:
-        col1, col2 = st.columns([9, 1])
-        with col1:
-            st.write(f"欢迎回来，**{st.session_state.USER_DATA['nickname']}** :wave:")
-        with col2:
-            st.image(st.session_state.USER_DATA['avatar_url'], width=30)
+        header_text = f"欢迎回来 <b>{st.session_state.USER.nickname}</b> ！ "
+        if st.session_state.USER.n_tokens <= 0:
+            header_text += "<font color=red>你的消息次数已经全部用完了</font>"
+        else:
+            header_text += f"你还有 <b>{st.session_state.USER.n_tokens}</b> 条消息可以发哦"
+        if st.session_state.USER.n_tokens < 10:
+            header_text += "， 请立即<b>充值</b>"
+        st.markdown(f"""
+        <table style="border-collapse: collapse; border: none;" cellspacing=0 cellpadding=0 width="100%"><tr style="border: none;"><td style="border: none;" align="right"><small>{header_text}</small></td><td style="border: none;" width=25 align="right"><img height=25 width=25 src="{st.session_state.USER.avatar_url}" alt="avatar"></td></tr></table>
+        """, unsafe_allow_html=True)
 
 
 # Main layout
@@ -214,6 +272,10 @@ with chat_box:
 
 # Define prompt element which is just a simple form
     with prompt_box:
+        # If the user has logged in and has no tokens left, will prompt him to recharge
+        if "USER" in st.session_state and st.session_state.USER.n_tokens <= 0:
+            st.warning("你的消息次数已用完，请充值")
+            st.stop()
         with st.form(key="prompt", clear_on_submit=True):
             human_prompt = st.text_input("请输入:")
             clicked = st.form_submit_button("发送")
@@ -263,7 +325,16 @@ if clicked:
         contents = line.split("AI: ")[1]
         st.markdown(f"`小潘`: {contents}")
 
-        if len(st.session_state.HISTORY) > DEMO_HISTORY_LIMIT:
-            st.warning(f"**公测版，限{DEMO_HISTORY_LIMIT}条对话**\n\n感谢您对我们的兴趣，我们会尽快上线更多功能！")
+        if "USER" in st.session_state:
+            # Consume one user token
+            action_res = st.session_state.USER.consume_token()
+            if action_res['status'] != 0:
+                st.error(f"无法消费消息次数: {action_res['message']}")
+                st.stop()
+
+        elif len(st.session_state.HISTORY) > DEMO_HISTORY_LIMIT:
+            st.warning(f"**公测版，限{DEMO_HISTORY_LIMIT}条对话**\n\n感谢您对我们的兴趣，想获取更多消息次数可以登录哦！")
             prompt_box.empty()
             st.stop()
+
+        st.experimental_rerun()
