@@ -12,7 +12,7 @@ WORKDIR /server
 RUN <<EOF
 set -e
 date > build_date.txt
-python3 -m pip install --no-cache-dir -r requirements_server.txt
+python3 -m pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements_server.txt
 EOF
 
 CMD python3 src/server.py

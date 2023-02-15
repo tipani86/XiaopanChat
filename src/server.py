@@ -83,7 +83,7 @@ def handle_wx_login():
 
             if table_res['status'] != 0:
                 res['errcode'] = table_res['status']
-                res['message'] = f"Failed to update entities: {table_res['message']}"
+                res['message'] = f"Failed to update entity: {table_res['message']}"
                 return jsonify(res)
 
         except:
