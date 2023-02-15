@@ -12,7 +12,7 @@ WORKDIR /app
 RUN <<EOF
 set -e
 date > build_date.txt
-python3 -m pip install --no-cache-dir -r requirements_app.txt
+python3 -m pip install --no-cache-dir -r requirements.txt
 EOF
 
 CMD streamlit run src/app.py
