@@ -12,16 +12,16 @@ class AzureTableOp:
         BLOB_KEY: str = "AZURE_STORAGE_CONNECTION_STRING"
     ) -> None:
         self.connection_string = None
-        self.NETWORK_RETRY_NUM = 5
+        self.NETWORK_RETRY_NUM = 3
 
         if BLOB_KEY not in os.environ:
             raise Exception(f"Environment variable {BLOB_KEY} missing!")
         self.connection_string = os.getenv(BLOB_KEY)
 
     def create_entity(
-            self, 
-            entity,
-            table_name: str = "test"
+        self, 
+        entity,
+        table_name: str = "test"
     ) -> dict:
 
         '''create a new entity, if you cannot make sure whether it exists, you can use update update_entities function.'''
@@ -55,9 +55,9 @@ class AzureTableOp:
             return res
 
     def delete_entity(
-            self, 
-            entity,
-            table_name: str = "test"
+        self, 
+        entity,
+        table_name: str = "test"
     ) -> dict:
         '''delete entity'''
         with TableClient.from_connection_string(self.connection_string, table_name) as table_client:
@@ -79,8 +79,8 @@ class AzureTableOp:
             # print("Successfully deleted!")
 
     def list_all_entities(
-            self, 
-            table_name: str = "test"
+        self, 
+        table_name: str = "test"
     ) -> dict:
         '''return list of all entities'''
         with TableClient.from_connection_string(self.connection_string, table_name) as table_client:
@@ -102,11 +102,11 @@ class AzureTableOp:
             return res
 
     def query_entities(
-            self, 
-            query_filter: str,
-            select: list,
-            parameters: dict,
-            table_name: str = "test"
+        self, 
+        query_filter: str,
+        select: list,
+        parameters: dict,
+        table_name: str = "test"
     ) -> dict:
         '''query entity, there are some samples in main following'''
         with TableClient.from_connection_string(self.connection_string, table_name) as table_client:
@@ -134,10 +134,10 @@ class AzureTableOp:
             return res
     
     def get_entity(
-            self, 
-            partition_key: str, 
-            row_key: str, 
-            table_name: str = "test"
+        self, 
+        partition_key: str, 
+        row_key: str, 
+        table_name: str = "test"
     ) -> dict:
         '''get one entity based on partition_key and row_key.'''
         with TableClient.from_connection_string(self.connection_string, table_name) as table_client:
@@ -160,9 +160,9 @@ class AzureTableOp:
             return res
 
     def update_entities(
-            self, 
-            entity,
-            table_name: str = "test"
+        self, 
+        entity,
+        table_name: str = "test"
     ) -> dict:
         """
         Check for size limit: The property value cannot exceed the maximum allowed size (64KB).
@@ -173,7 +173,7 @@ class AzureTableOp:
             entity = self._compress_entity(entity)
 
         '''update entity, if the entity doesn't exist, create it'''
-        with TableClient.from_connection_string(self.connect_string, table_name=table_name) as table_client:
+        with TableClient.from_connection_string(self.connection_string, table_name=table_name) as table_client:
             for _ in range(self.NETWORK_RETRY_NUM):
                 res = {'status': 0, 'message': "Success"}
                 try:
@@ -186,7 +186,6 @@ class AzureTableOp:
                     return res
                 except Exception as e:
                     msg = f"Exception {e} encountered while upserting entity! Traceback: {traceback.format_exc()}"
-                    logger.error(msg)
                     res['message'] = msg
                     time.sleep(5 * _)
             res['status'] = 1
@@ -194,8 +193,8 @@ class AzureTableOp:
             return res
 
     def _decompress_entity(
-            self, 
-            entity
+        self, 
+        entity
     ) -> dict:
         decompressed_entity = {}
         for key in entity.keys():
@@ -208,8 +207,8 @@ class AzureTableOp:
         return decompressed_entity
 
     def _compress_entity(
-            self, 
-            entity
+        self, 
+        entity
     ) -> dict:
         ignore_keys = ["PartitionKey", "RowKey"]
         compressed_entity = {

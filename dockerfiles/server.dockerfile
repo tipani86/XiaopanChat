@@ -15,4 +15,4 @@ date > build_date.txt
 python3 -m pip install --no-cache-dir -r requirements_server.txt
 EOF
 
-CMD flask --app src/server.py run
+CMD python3 src/server.py
