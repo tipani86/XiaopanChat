@@ -4,3 +4,4 @@ streamlit
 streamlit-modal
 azure-core
 azure-data-tables
+transformers
