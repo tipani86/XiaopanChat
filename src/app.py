@@ -23,7 +23,7 @@ for key in ["OPENAI_API_KEY", "OPENAI_ORG_ID", "WX_LOGIN_SECRET", "AZURE_STORAGE
 # Set global variables
 
 DEMO_HISTORY_LIMIT = 10
-NEW_USER_FREE_TOKENS = 25
+NEW_USER_FREE_TOKENS = 20
 FREE_TOKENS_PER_REFERRAL = 10
 
 build_date = "unknown"
@@ -59,7 +59,7 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 # Maintain a chat history in session state
 if "HISTORY" not in st.session_state:
     st.session_state.HISTORY = [
-        "You are an AI assistant called 小潘. You're very capable, able to adjust to the various messages from a human and provide helpful replies in the same language as the question was asked in. Below is the chat log:",
+        "You are an AI assistant called 小潘 (Xiaopan). You're very capable, able to adjust to the various messages from a human and provide helpful replies in the same language as the question was asked in. Below is the chat log:",
     ]
 
 ### MAIN STREAMLIT UI STARTS HERE ###
@@ -100,6 +100,14 @@ st.markdown(f"""<style>
         t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
         y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
     }})(window, document, "clarity", "script", "fuwdd48n5i");
+    (function(window, document, dataLayerName, id) {{
+window[dataLayerName]=window[dataLayerName]||[],window[dataLayerName].push({{start:(new Date).getTime(),event:"stg.start"}});var scripts=document.getElementsByTagName('script')[0],tags=document.createElement('script');
+function stgCreateCookie(a,b,c){{var d="";if(c){{var e=new Date;e.setTime(e.getTime()+24*c*60*60*1e3),d="; expires="+e.toUTCString()}}document.cookie=a+"="+b+d+"; path=/"}}
+var isStgDebug=(window.location.href.match("stg_debug")||document.cookie.match("stg_debug"))&&!window.location.href.match("stg_disable_debug");stgCreateCookie("stg_debug",isStgDebug?1:"",isStgDebug?14:-1);
+var qP=[];dataLayerName!=="dataLayer"&&qP.push("data_layer_name="+dataLayerName),isStgDebug&&qP.push("stg_debug");var qPString=qP.length>0?("?"+qP.join("&")):"";
+tags.async=!0,tags.src="https://xiaopan.containers.piwik.pro/"+id+".js"+qPString,scripts.parentNode.insertBefore(tags,scripts);
+!function(a,n,i){{a[n]=a[n]||{{}};for(var c=0;c<i.length;c++)!function(i){{a[n][i]=a[n][i]||{{}},a[n][i].api=a[n][i].api||function(){{var a=[].slice.call(arguments,0);"string"==typeof a[0]&&window[dataLayerName].push({{event:n+"."+i+":"+a[0],parameters:[].slice.call(arguments,1)}})}}}}(i[c])}}(window,"ppms",["tm","cm"]);
+}})(window, document, 'dataLayer', '84ddea31-5408-4d83-a6fe-ffe81f25b029');
 </script>
 """, unsafe_allow_html=True)
 
@@ -113,7 +121,7 @@ if "USER_DATA" not in st.session_state:
     with header:
         col1, col2 = st.columns([9, 1])
         with col1:
-            st.markdown("<small>公测试用版，限10条来回消息，登录后可获取更多聊天资格哦!</small>", unsafe_allow_html=True)
+            st.markdown(f"<small>公测试用版，限{DEMO_HISTORY_LIMIT/2}次消息来回，登录后可获取更多聊天资格哦!</small>", unsafe_allow_html=True)
         with col2:
             start_login = st.button("登录")
         if start_login:
@@ -341,7 +349,7 @@ if clicked:
                 st.stop()
 
         elif len(st.session_state.HISTORY) > DEMO_HISTORY_LIMIT:
-            st.warning(f"**公测版，限{DEMO_HISTORY_LIMIT}条对话**\n\n感谢您对我们的兴趣，想获取更多消息次数可以登录哦！")
+            st.warning(f"**公测版，限{DEMO_HISTORY_LIMIT/2}次对话消息的来回**\n\n感谢您对我们的兴趣，想获取更多消息次数可以登录哦！")
             prompt_box.empty()
             st.stop()
 
