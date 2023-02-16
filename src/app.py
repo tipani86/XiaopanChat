@@ -64,7 +64,7 @@ if "HISTORY" not in st.session_state:
 
 ### MAIN STREAMLIT UI STARTS HERE ###
 
-# Define overall layout
+
 st.set_page_config(
     page_title="小潘AI",
     page_icon="https://openaiapi-site.azureedge.net/public-assets/d/377f6a405e/favicon.svg",
@@ -79,21 +79,8 @@ def get_table_op():
 azure_table_op = get_table_op()
 
 padding = 2
-st.markdown(f"""<style>
-    # MainMenu {{
-        visibility: hidden;
-    }}
-    footer {{
-        visibility: hidden;
-    }}
-    blockquote {{
-        text-align: right;
-    }}
-    .appview-container .main .block-container {{
-        padding-top: {padding}rem;
-        padding-bottom: 0rem;
-    }}
-</style>
+st.markdown(f"""
+
 <script type="text/javascript">
     (function(c,l,a,r,i,t,y){{
         c[a]=c[a]||function(){{(c[a].q=c[a].q||[]).push(arguments)}};
@@ -109,7 +96,29 @@ tags.async=!0,tags.src="https://xiaopan.containers.piwik.pro/"+id+".js"+qPString
 !function(a,n,i){{a[n]=a[n]||{{}};for(var c=0;c<i.length;c++)!function(i){{a[n][i]=a[n][i]||{{}},a[n][i].api=a[n][i].api||function(){{var a=[].slice.call(arguments,0);"string"==typeof a[0]&&window[dataLayerName].push({{event:n+"."+i+":"+a[0],parameters:[].slice.call(arguments,1)}})}}}}(i[c])}}(window,"ppms",["tm","cm"]);
 }})(window, document, 'dataLayer', '84ddea31-5408-4d83-a6fe-ffe81f25b029');
 </script>
+
+<style>
+    # MainMenu {{
+        visibility: hidden;
+    }}
+    footer {{
+        visibility: hidden;
+    }}
+    blockquote {{
+        text-align: right;
+    }}
+    .appview-container .main .block-container {{
+        padding-top: {padding}rem;
+        padding-bottom: 0rem;
+    }}
+</style>
+
 """, unsafe_allow_html=True)
+
+# Define overall layout
+query_params = st.experimental_get_query_params()
+if DEBUG:
+    st.write(f"`Query params: {query_params}`")
 
 header = st.container()
 
