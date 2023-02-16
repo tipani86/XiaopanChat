@@ -12,6 +12,7 @@ import streamlit as st
 from streamlit_modal import Modal
 import streamlit.components.v1 as components
 from utils import AzureTableOp, User
+from transformers import AutoTokenizer
 
 DEBUG = True
 
@@ -41,18 +42,23 @@ BACKOFF = 1.5
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-@st.cache_resource
+@st.cache_resource(show_spinner=False)
 def get_table_op():
     return AzureTableOp()
 
 
-@st.cache_data
+@st.cache_data(show_spinner=False)
 def get_loading_gif():
     # Load a byte image and return its base64 encoded string
     return base64.b64encode(open(os.path.join(ROOT_DIR, "src", "loading.gif"), "rb").read()).decode("utf-8")
 
 
-@st.cache_data
+@st.cache_data(show_spinner=False)
+def get_tokenizer():
+    return AutoTokenizer.from_pretrained("gpt2", low_cpu_mem_usage=True)
+
+
+@st.cache_data(show_spinner=False)
 def get_js():
     # Add Javascript web trackers and a cool hack to enable Enter key to submit
     # (Ref: https://www.youtube.com/watch?v=SLyS0v8br20)
@@ -141,7 +147,9 @@ def update_header():
     """, unsafe_allow_html=True)
 
 
-azure_table_op = get_table_op()
+with st.spinner("应用首次初始化中..."):
+    azure_table_op = get_table_op()
+    tokenizer = get_tokenizer()
 
 padding = 2
 st.markdown(f"""
@@ -379,6 +387,11 @@ if clicked:
             try:
                 reply_box = st.empty()
                 reply_box.markdown(f"`小潘`: &nbsp;<img src='data:image/gif;base64,{get_loading_gif()}' width=30 height=10>", unsafe_allow_html=True)
+                # Tokenize the prompt to count if we have reached the max tokens
+                tokens = tokenizer.tokenize(prompt)
+                st.write(f"Token count: {len(tokens)}")
+                st.stop()
+
                 reply = []
                 for resp in openai.Completion.create(
                     model="text-davinci-003",
