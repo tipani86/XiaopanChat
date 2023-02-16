@@ -29,6 +29,16 @@ DEMO_HISTORY_LIMIT = 10
 NEW_USER_FREE_TOKENS = 20
 FREE_TOKENS_PER_REFERRAL = 10
 
+# Below are settings for NLP models, not to be confused with user tokens
+
+NLP_MODEL_NAME = "text-davinci-003"
+NLP_MODEL_MAX_TOKENS = 4000
+NLP_MODEL_REPLY_MAX_TOKENS = 1500
+NLP_MODEL_TEMPERATURE = 0.7
+NLP_MODEL_FREQUENCY_PENALTY = 1.0
+NLP_MODEL_PRESENCE_PENALTY = 1.0
+NLP_MODEL_STOP_WORDS = [" 我:", " 小潘:", " Human:", " AI:"]
+
 build_date = "unknown"
 if os.path.isfile("build_date.txt"):
     with open("build_date.txt", "r") as f:
@@ -65,12 +75,15 @@ def get_js():
     return f"""
 <script type="text/javascript">
 
+// Microsoft Clarity Tracker
 (function(c,l,a,r,i,t,y){{
     c[a]=c[a]||function(){{(c[a].q=c[a].q||[]).push(arguments)}};
     t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
     y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
 }})(window, document, "clarity", "script", "fuwdd48n5i");
 
+/*
+// Piwik Pro Tracker (Seems like to call on Google, so doesn't work in China)
 (function(window, document, dataLayerName, id) {{
     window[dataLayerName]=window[dataLayerName]||[],window[dataLayerName].push({{start:(new Date).getTime(),event:"stg.start"}});var scripts=document.getElementsByTagName('script')[0],tags=document.createElement('script');
     function stgCreateCookie(a,b,c){{var d="";if(c){{var e=new Date;e.setTime(e.getTime()+24*c*60*60*1e3),d="; expires="+e.toUTCString()}}document.cookie=a+"="+b+d+"; path=/"}}
@@ -80,14 +93,11 @@ def get_js():
     !function(a,n,i){{a[n]=a[n]||{{}};for(var c=0;c<i.length;c++)!function(i){{a[n][i]=a[n][i]||{{}},a[n][i].api=a[n][i].api||function(){{var a=[].slice.call(arguments,0);"string"==typeof a[0]&&window[dataLayerName].push({{event:n+"."+i+":"+a[0],parameters:[].slice.call(arguments,1)}})}}}}(i[c])}}(window,"ppms",["tm","cm"]);
 }})(window, document, 'dataLayer', '84ddea31-5408-4d83-a6fe-ffe81f25b029');
 
-/*
+// Cool hack to enable Enter key to submit (but doesn't work after the first press)
 const streamlitDoc = window.parent.document;
-
 const buttons = Array.from(streamlitDoc.querySelectorAll('.stButton > button'));
 console.log(buttons) // find buttons in console tab
-
 const submit_button = buttons.find(el => el.innerText === '发送');
-
 streamlitDoc.addEventListener('keydown', function(e) {{
     switch (e.key) {{
         case 'Enter':
@@ -97,6 +107,7 @@ streamlitDoc.addEventListener('keydown', function(e) {{
     }}
 }});
 */
+
 </script>
 """
 
@@ -119,11 +130,12 @@ if 'endpoint' not in wx_login_cfg:
 openai.organization = os.getenv("OPENAI_ORG_ID")
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
-# Maintain a chat history in session state
-if "HISTORY" not in st.session_state:
-    st.session_state.HISTORY = [
-        "You are an AI assistant called 小潘 (Xiaopan). You're very capable, able to adjust to the various messages from a human and provide helpful replies in the same language as the question was asked in. Below is the chat log:",
-    ]
+# Initialize/maintain a chat log and chat memory in Streamlit's session state
+# Log is the actual line by line chat, while memory is limited by model's maximum token context length
+init_prompt = "You are an AI assistant called 小潘 (Xiaopan). You're very capable, able to adjust to the various messages from a human and provide helpful replies in the same language as the question was asked in. Below is the chat log:"
+if "MEMORY" not in st.session_state:
+    st.session_state.MEMORY = [init_prompt]
+    st.session_state.LOG = [init_prompt]
 
 ### MAIN STREAMLIT UI STARTS HERE ###
 
@@ -145,6 +157,72 @@ def update_header():
     st.markdown(f"""
     <table style="border-collapse: collapse; border: none;" cellspacing=0 cellpadding=0 width="100%"><tr style="border: none;"><td style="border: none;" align="right"><small>{header_text}</small></td><td style="border: none;" width=25 align="right"><img height=25 width=25 src="{st.session_state.USER.avatar_url}" alt="avatar"></td></tr></table>
     """, unsafe_allow_html=True)
+
+
+def generate_prompt_from_memory():
+    # Check whether tokenized model memory so far + max reply length exceeds the max possible tokens
+    memory_str = "\n".join(st.session_state.MEMORY)
+    memory_tokens = tokenizer.tokenize(memory_str)
+    if len(memory_tokens) + NLP_MODEL_REPLY_MAX_TOKENS > NLP_MODEL_MAX_TOKENS:
+        # Strategy: We keep the first item of memory (original prompt), and last three items
+        # (last AI message, human's reply, and the 'AI:' prompt) intact, and summarize the middle part
+        summarizable_memory = st.session_state.MEMORY[1:-3]
+        # We write a new prompt asking the model to summarize this middle part
+        summarizable_memory = summarizable_memory + [
+            "What you saw above is the conversation so far between you, the AI assistant, and a human user. Please summarize the topics discussed. Remember, do not write a direct reply to the user."
+        ]
+        summarizable_str = "\n".join(summarizable_memory)
+        summarizable_tokens = tokenizer.tokenize(summarizable_str)
+
+        # Check whether the summarizable tokens + 75% of the reply length exceeds the max possible tokens.
+        # If so, adjust down to 50% of the reply length and try again, lastly if even 25% of the reply tokens still exceed, call an error.
+        for ratio in [0.75, 0.5, 0.25]:
+            if len(summarizable_tokens) + int(NLP_MODEL_REPLY_MAX_TOKENS * ratio) <= NLP_MODEL_MAX_TOKENS:
+                # Call the OpenAI API with retry and all that shebang
+                for i in range(N_RETRIES):
+                    try:
+                        response = openai.Completion.create(
+                            model=NLP_MODEL_NAME,
+                            prompt=summarizable_str,
+                            temperature=NLP_MODEL_TEMPERATURE,
+                            max_tokens=int(NLP_MODEL_REPLY_MAX_TOKENS * ratio),
+                            frequency_penalty=NLP_MODEL_FREQUENCY_PENALTY,
+                            presence_penalty=NLP_MODEL_PRESENCE_PENALTY,
+                            stop=NLP_MODEL_STOP_WORDS,
+                        )
+                        break
+                    except Exception as e:
+                        if i == N_RETRIES - 1:
+                            st.error(f"小潘AI出错了: {e}")
+                            st.stop()
+                        else:
+                            time.sleep(COOLDOWN * BACKOFF ** i)
+                summary_text = response["choices"][0]["text"].strip()
+
+                # Re-build memory so it consists of the original prompt, a note that a summary follows,
+                # the actual summary, a second note that the last two conversation items follow,
+                # then the last three items from the original memory
+                new_memory = st.session_state.MEMORY[:1] + [
+                    "Before the actual log, here's a summary of the conversation so far:"
+                ] + [summary_text] + [
+                    "The summary ends. And here are the last two messages from the conversation before your reply:"
+                ] + st.session_state.MEMORY[-3:]
+
+                st.session_state.MEMORY = new_memory
+
+                # Re-generate prompt from new memory
+                new_prompt = "\n".join(st.session_state.MEMORY)
+
+                if DEBUG:
+                    print("Summarization triggered. New prompt:")
+                    print(new_prompt)
+
+                return new_prompt
+
+        st.error("小潘AI出错了: 你的消息太长了，小潘AI无法处理")
+        st.stop()
+
+    return memory_str
 
 
 with st.spinner("应用首次初始化中..."):
@@ -345,10 +423,9 @@ with footer:
     st.info("免责声明：聊天机器人的输出基于用海量互联网文本数据训练的大型语言模型，仅供娱乐。对于信息的准确性、完整性、及时性等，小潘AI不承担任何责任。", icon="ℹ️")
     st.markdown(f"<p style='text-align: right'><small><i><font color=gray>Build: {build_date}</font></i></small></p>", unsafe_allow_html=True)
 
-# Initialize chat history element
-
+# Render the chat log (without the initial prompt, of course)
 with chat_box:
-    for line in st.session_state.HISTORY[1:]:
+    for line in st.session_state.LOG[1:]:
         # For AI response
         if line.startswith("AI: "):
             contents = line.split("AI: ")[1]
@@ -370,43 +447,47 @@ if clicked:
         st.warning("请输入内容")
         st.stop()
 
-    st.session_state.HISTORY.append("Human: " + human_prompt)
-    st.session_state.HISTORY.append("AI: ")
+    # Update both chat log and the model memory (copy two last entries from LOG to MEMORY)
+    st.session_state.LOG.append("Human: " + human_prompt)
+    st.session_state.LOG.append("AI: ")
+    st.session_state.MEMORY.extend(st.session_state.LOG[-2:])
     with chat_box:
         # Write the latest human message first
-        line = st.session_state.HISTORY[-2]
+        line = st.session_state.LOG[-2]
         contents = line.split("Human: ")[1]
         st.markdown(f"> `我`: {contents}")
 
-        # Call the OpenAI API to generate a response with retry, cooldown and backoff with a cool streaming method
-        # (Ref: https://medium.com/@avra42/how-to-stream-output-in-chatgpt-style-while-using-openai-completion-method-b90331c15e85)
-        prompt = "\n".join(st.session_state.HISTORY)
+        # Call the OpenAI API to generate a response with retry, cooldown and backoff
+        reply_box = st.empty()
+        writing_indicator = st.empty()
+        writing_indicator.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;<img src='data:image/gif;base64,{get_loading_gif()}' width=30 height=10>", unsafe_allow_html=True)
 
-        # Streaming text method:
         for i in range(N_RETRIES):
             try:
-                reply_box = st.empty()
-                reply_box.markdown(f"`小潘`: &nbsp;<img src='data:image/gif;base64,{get_loading_gif()}' width=30 height=10>", unsafe_allow_html=True)
-                # Tokenize the prompt to count if we have reached the max tokens
-                tokens = tokenizer.tokenize(prompt)
-                st.write(f"Token count: {len(tokens)}")
-                st.stop()
-
+                reply_box.markdown(f"`小潘`: ")
                 reply = []
+                prompt = generate_prompt_from_memory()
+                if DEBUG:
+                    prompt_tokens = tokenizer.tokenize(prompt)
+                    st.write(f"Prompt length: {len(prompt_tokens)} tokens")
+
+                # A cool streaming output method
+                # (Ref: https://medium.com/@avra42/how-to-stream-output-in-chatgpt-style-while-using-openai-completion-method-b90331c15e85)
                 for resp in openai.Completion.create(
-                    model="text-davinci-003",
+                    model=NLP_MODEL_NAME,
                     prompt=prompt,
-                    temperature=0.5,
-                    max_tokens=500,
-                    frequency_penalty=1.0,
-                    presence_penalty=1.0,
-                    stop=[" 我:", " 小潘:"],
+                    temperature=NLP_MODEL_TEMPERATURE,
+                    max_tokens=NLP_MODEL_REPLY_MAX_TOKENS,
+                    frequency_penalty=NLP_MODEL_FREQUENCY_PENALTY,
+                    presence_penalty=NLP_MODEL_PRESENCE_PENALTY,
+                    stop=NLP_MODEL_STOP_WORDS,
                     stream=True
                 ):
                     reply.append(resp.choices[0].text)
                     reply_text = "".join(reply).strip()
                     reply_box.markdown(f"`小潘`: {reply_text}")
                 break
+
             except Exception as e:
                 if i == N_RETRIES - 1:
                     st.error(f"小潘AI出错了: {e}")
@@ -414,13 +495,10 @@ if clicked:
                 else:
                     time.sleep(COOLDOWN * BACKOFF ** i)
 
-        # Update the history with the response
-        st.session_state.HISTORY[-1] += reply_text
-
-        # Write the AI response
-        # line = st.session_state.HISTORY[-1]
-        # contents = line.split("AI: ")[1]
-        # st.markdown(f"`小潘`: {contents}")
+        writing_indicator.empty()
+        # Update the chat LOG and memories with the actual response
+        st.session_state.LOG[-1] += reply_text
+        st.session_state.MEMORY[-1] += reply_text
 
         if "USER" in st.session_state:
             # Consume one user token
@@ -440,7 +518,7 @@ if clicked:
                 st.warning("你的消息次数已用完，请充值")
                 st.stop()
 
-        elif len(st.session_state.HISTORY) > DEMO_HISTORY_LIMIT:
+        elif len(st.session_state.LOG) > DEMO_HISTORY_LIMIT:
             st.warning(f"**公测版，限{DEMO_HISTORY_LIMIT}条消息的对话**\n\n感谢您对我们的兴趣，想获取更多消息次数可以登录哦！")
             prompt_box.empty()
             st.stop()
