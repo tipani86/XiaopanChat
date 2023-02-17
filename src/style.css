@@ -30,7 +30,6 @@
 
     .chat-bubble {
         display: inline-block;
-        background: rgb(240, 242, 246);
         border: 1px solid transparent;
         border-radius: 10px;
         padding: 10px 14px;

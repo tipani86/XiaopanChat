@@ -71,9 +71,9 @@ def get_table_op():
 
 
 @st.cache_data(show_spinner=False)
-def get_loading_gif():
+def get_local_img(file_path):
     # Load a byte image and return its base64 encoded string
-    return base64.b64encode(open(os.path.join(ROOT_DIR, "src", "loading.gif"), "rb").read()).decode("utf-8")
+    return base64.b64encode(open(file_path, "rb").read()).decode("utf-8")
 
 
 @st.cache_data(show_spinner=False)
@@ -81,14 +81,12 @@ def get_tokenizer():
     return AutoTokenizer.from_pretrained("gpt2", low_cpu_mem_usage=True)
 
 
-# @st.cache_data(show_spinner=False)
 def get_js():
     # Read javascript web trackers code from script.js file
     with open(os.path.join(ROOT_DIR, "src", "script.js"), "r") as f:
         return f"<script type='text/javascript'>{f.read()}</script>"
 
 
-# @st.cache_data(show_spinner=False)
 def get_css():
     # Read CSS code from style.css file
     with open(os.path.join(ROOT_DIR, "src", "style.css"), "r") as f:
@@ -115,7 +113,7 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 
 # Initialize/maintain a chat log and chat memory in Streamlit's session state
 # Log is the actual line by line chat, while memory is limited by model's maximum token context length
-init_prompt = "You are an AI assistant called 小潘 (Xiaopan). You're very capable, able to adjust to the various messages from a human and provide helpful replies in the same language as the question was asked in. Below is the chat log:"
+init_prompt = "You are an AI assistant called 小潘 (Xiaopan). You're very capable, able to adjust to the various messages from a human and provide helpful replies in the same language as the question was asked in. Add line breaks to structure your reply in paragraphs if it's long. Below is the chat log:"
 if "MEMORY" not in st.session_state:
     st.session_state.MEMORY = [init_prompt]
     st.session_state.LOG = [init_prompt]
@@ -127,6 +125,34 @@ st.set_page_config(
     page_title="小潘AI",
     page_icon="https://openaiapi-site.azureedge.net/public-assets/d/377f6a405e/favicon.svg",
 )
+
+
+def get_chat_message(
+    contents: str = "",
+    align: str = "left"
+) -> str:
+    div_class = "AI-line"
+    color = "rgb(240, 242, 246)"
+    # Generate a random AI avatar from today's date string
+    src = f"https://api.dicebear.com/5.x/lorelei/svg?seed={datetime.datetime.now().strftime('%Y%m%d')}"
+    if align == "right":
+        div_class = "human-line"
+        color = "rgb(165, 239, 127)"
+        if "USER" in st.session_state:
+            src = st.session_state.USER.avatar_url
+        else:
+            file_path = os.path.join(ROOT_DIR, "src", "user_icon.png")
+            src = f"data:image/gif;base64,{get_local_img(file_path)}"
+    icon_code = f"<img src='{src}' width=56 height=56 alt='avatar'>"
+    formatted_contents = f"""
+    <div class="{div_class}">
+        {icon_code}
+        <div class="chat-bubble" style="background: {color};">
+        &#8203;{contents}
+        </div>
+    </div>
+    """
+    return formatted_contents
 
 
 def update_header():
@@ -380,7 +406,9 @@ if login_popup.is_open():
 
 # Main layout
 
-st.subheader("你好，我是小潘AI:robot_face:，来跟我说点什么吧！")
+st.subheader("")
+st.subheader("你好，我是小潘AI，来跟我说点什么吧！")
+st.subheader("")
 chat_box = st.container()
 prompt_box = st.empty()
 footer = st.container()
@@ -394,12 +422,14 @@ with chat_box:
         # For AI response
         if line.startswith("AI: "):
             contents = line.split("AI: ")[1]
-            st.markdown(f"`小潘`: {contents}")
+            # st.markdown(f"`小潘`: {contents}")
+            st.markdown(get_chat_message(contents), unsafe_allow_html=True)
 
         # For human prompts
         if line.startswith("Human: "):
             contents = line.split("Human: ")[1]
-            st.markdown(f"> `我`: {contents}")
+            # st.markdown(f"> `我`: {contents}")
+            st.markdown(get_chat_message(contents, align="right"), unsafe_allow_html=True)
 
 
 # Define an input box for human prompts
@@ -425,7 +455,7 @@ with chat_box:
     # Write the latest human message first
     line = st.session_state.LOG[-2]
     contents = line.split("Human: ")[1]
-    st.markdown(f"> `我`: {contents}")
+    st.markdown(get_chat_message(contents, align="right"), unsafe_allow_html=True)
 
     # A cool streaming output method by constantly writing to a placeholder element
     # (Ref: https://medium.com/@avra42/how-to-stream-output-in-chatgpt-style-while-using-openai-completion-method-b90331c15e85)
@@ -433,12 +463,13 @@ with chat_box:
 
     # This is one of those small three-dot animations to indicate the bot is "writing"
     writing_animation = st.empty()
-    writing_animation.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;<img src='data:image/gif;base64,{get_loading_gif()}' width=30 height=10>", unsafe_allow_html=True)
+    file_path = os.path.join(ROOT_DIR, "src", "loading.gif")
+    writing_animation.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;<img src='data:image/gif;base64,{get_local_img(file_path)}' width=30 height=10>", unsafe_allow_html=True)
 
     # Call the OpenAI API to generate a response with retry, cooldown and backoff
     for i in range(N_RETRIES):
         try:
-            reply_box.markdown(f"`小潘`: ")
+            reply_box.markdown(get_chat_message(), unsafe_allow_html=True)
             reply = []
             prompt = generate_prompt_from_memory()
 
@@ -455,7 +486,7 @@ with chat_box:
                 reply.append(resp.choices[0].text)
                 reply_text = "".join(reply).strip()
                 # Visualize the streaming output in real-time
-                reply_box.markdown(f"`小潘`: {reply_text}")
+                reply_box.markdown(get_chat_message(reply_text), unsafe_allow_html=True)
             break
 
         except Exception as e:
