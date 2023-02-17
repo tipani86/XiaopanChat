@@ -10,7 +10,6 @@ import calendar
 import numpy as np
 import streamlit as st
 from streamlit_modal import Modal
-from streamlit_chat import message
 import streamlit.components.v1 as components
 from utils import AzureTableOp, User
 from transformers import AutoTokenizer
@@ -31,7 +30,6 @@ NEW_USER_FREE_TOKENS = 20
 FREE_TOKENS_PER_REFERRAL = 10
 
 # Below are settings for NLP models, not to be confused with user tokens
-
 NLP_MODEL_NAME = "text-davinci-003"
 NLP_MODEL_MAX_TOKENS = 4000
 NLP_MODEL_REPLY_MAX_TOKENS = 1500
@@ -52,6 +50,20 @@ BACKOFF = 1.5
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+clear_input_script = """
+<script>
+    // Clear input value
+    const streamlitDoc = window.parent.document
+    // Find the target input element
+    const inputs = Array.from(streamlitDoc.getElementsByTagName('input'))
+    const input = inputs.find(el=> el.ariaLabel === '请输入:')
+    // Clear the input value if it has value
+    if (input.value) {
+        input.value = ''
+    }
+</script>
+"""
+
 
 @st.cache_resource(show_spinner=False)
 def get_table_op():
@@ -69,14 +81,14 @@ def get_tokenizer():
     return AutoTokenizer.from_pretrained("gpt2", low_cpu_mem_usage=True)
 
 
-@st.cache_data(show_spinner=False)
+# @st.cache_data(show_spinner=False)
 def get_js():
     # Read javascript web trackers code from script.js file
     with open(os.path.join(ROOT_DIR, "src", "script.js"), "r") as f:
         return f"<script type='text/javascript'>{f.read()}</script>"
 
 
-@st.cache_data(show_spinner=False)
+# @st.cache_data(show_spinner=False)
 def get_css():
     # Read CSS code from style.css file
     with open(os.path.join(ROOT_DIR, "src", "style.css"), "r") as f:
@@ -368,7 +380,7 @@ if login_popup.is_open():
 
 # Main layout
 
-st.subheader("你好，我是小潘AI:robot_face:，跟我说点什么吧！")
+st.subheader("你好，我是小潘AI:robot_face:，来跟我说点什么吧！")
 chat_box = st.container()
 prompt_box = st.empty()
 footer = st.container()
@@ -378,104 +390,111 @@ with footer:
 
 # Render the chat log (without the initial prompt, of course)
 with chat_box:
-    for line in st.session_state.LOG[1:]:
+    for i, line in enumerate(st.session_state.LOG[1:]):
         # For AI response
         if line.startswith("AI: "):
             contents = line.split("AI: ")[1]
             st.markdown(f"`小潘`: {contents}")
+
         # For human prompts
         if line.startswith("Human: "):
             contents = line.split("Human: ")[1]
             st.markdown(f"> `我`: {contents}")
 
-# Define prompt element which is just a simple form
-    with prompt_box:
-        with st.form(key="prompt", clear_on_submit=True):
-            human_prompt = st.text_input("请输入:")
-            clicked = st.form_submit_button("发送")
 
-# If the user has submitted a prompt, we update the history, generate a response and show the response in chat box
-if clicked:
-    if len(human_prompt) == 0:
-        st.warning("请输入内容")
-        st.stop()
+# Define an input box for human prompts
+with prompt_box:
+    human_prompt = st.text_input("请输入:", key="human_prompt_text")
 
-    # Update both chat log and the model memory (copy two last entries from LOG to MEMORY)
-    st.session_state.LOG.append("Human: " + human_prompt)
-    st.session_state.LOG.append("AI: ")
-    st.session_state.MEMORY.extend(st.session_state.LOG[-2:])
-    with chat_box:
-        # Write the latest human message first
-        line = st.session_state.LOG[-2]
-        contents = line.split("Human: ")[1]
-        st.markdown(f"> `我`: {contents}")
+# When the user presses Enter, we update the chat log and the model memory
+if len(human_prompt) <= 0:
+    st.stop()
 
-        # A cool streaming output method by constantly writing to a placeholder element
-        # (Ref: https://medium.com/@avra42/how-to-stream-output-in-chatgpt-style-while-using-openai-completion-method-b90331c15e85)
-        reply_box = st.empty()
+# Strip the prompt of any potentially harmful html/js injections
+human_prompt = human_prompt.replace("<", "&lt;").replace(">", "&gt;")
 
-        # This is one of those small three-dot animations to indicate the bot is "writing"
-        writing_animation = st.empty()
-        writing_animation.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;<img src='data:image/gif;base64,{get_loading_gif()}' width=30 height=10>", unsafe_allow_html=True)
+# Update both chat log and the model memory (copy two last entries from LOG to MEMORY)
+st.session_state.LOG.append("Human: " + human_prompt)
+st.session_state.LOG.append("AI: ")
+st.session_state.MEMORY.extend(st.session_state.LOG[-2:])
 
-        # Call the OpenAI API to generate a response with retry, cooldown and backoff
-        for i in range(N_RETRIES):
-            try:
-                reply_box.markdown(f"`小潘`: ")
-                reply = []
-                prompt = generate_prompt_from_memory()
-                if DEBUG:
-                    prompt_tokens = tokenizer.tokenize(prompt)
-                    st.write(f"Prompt length: {len(prompt_tokens)} tokens")
+# Run a special JS code to clear the input box after human_prompt is used
+components.html(clear_input_script, height=0, width=0)
 
-                for resp in openai.Completion.create(
-                    model=NLP_MODEL_NAME,
-                    prompt=prompt,
-                    temperature=NLP_MODEL_TEMPERATURE,
-                    max_tokens=NLP_MODEL_REPLY_MAX_TOKENS,
-                    frequency_penalty=NLP_MODEL_FREQUENCY_PENALTY,
-                    presence_penalty=NLP_MODEL_PRESENCE_PENALTY,
-                    stop=NLP_MODEL_STOP_WORDS,
-                    stream=True
-                ):
-                    reply.append(resp.choices[0].text)
-                    reply_text = "".join(reply).strip()
-                    reply_box.markdown(f"`小潘`: {reply_text}")
-                break
+with chat_box:
+    # Write the latest human message first
+    line = st.session_state.LOG[-2]
+    contents = line.split("Human: ")[1]
+    st.markdown(f"> `我`: {contents}")
 
-            except Exception as e:
-                if i == N_RETRIES - 1:
-                    st.error(f"小潘AI出错了: {e}")
-                    st.stop()
-                else:
-                    time.sleep(COOLDOWN * BACKOFF ** i)
+    # A cool streaming output method by constantly writing to a placeholder element
+    # (Ref: https://medium.com/@avra42/how-to-stream-output-in-chatgpt-style-while-using-openai-completion-method-b90331c15e85)
+    reply_box = st.empty()
 
-        # Clear the writing animation
-        writing_animation.empty()
+    # This is one of those small three-dot animations to indicate the bot is "writing"
+    writing_animation = st.empty()
+    writing_animation.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;<img src='data:image/gif;base64,{get_loading_gif()}' width=30 height=10>", unsafe_allow_html=True)
 
-        # Update the chat LOG and memories with the actual response
-        st.session_state.LOG[-1] += reply_text
-        st.session_state.MEMORY[-1] += reply_text
+    # Call the OpenAI API to generate a response with retry, cooldown and backoff
+    for i in range(N_RETRIES):
+        try:
+            reply_box.markdown(f"`小潘`: ")
+            reply = []
+            prompt = generate_prompt_from_memory()
 
-        if "USER" in st.session_state:
-            # Consume one user token
-            action_res = st.session_state.USER.consume_token()
-            if action_res['status'] != 0:
-                st.error(f"无法消费消息次数: {action_res['message']}")
+            for resp in openai.Completion.create(
+                model=NLP_MODEL_NAME,
+                prompt=prompt,
+                temperature=NLP_MODEL_TEMPERATURE,
+                max_tokens=NLP_MODEL_REPLY_MAX_TOKENS,
+                frequency_penalty=NLP_MODEL_FREQUENCY_PENALTY,
+                presence_penalty=NLP_MODEL_PRESENCE_PENALTY,
+                stop=NLP_MODEL_STOP_WORDS,
+                stream=True
+            ):
+                reply.append(resp.choices[0].text)
+                reply_text = "".join(reply).strip()
+                # Visualize the streaming output in real-time
+                reply_box.markdown(f"`小潘`: {reply_text}")
+            break
+
+        except Exception as e:
+            if i == N_RETRIES - 1:
+                st.error(f"小潘AI出错了: {e}")
                 st.stop()
+            else:
+                time.sleep(COOLDOWN * BACKOFF ** i)
 
-            with header:
-                header_container = st.container()
-                with header_container:
-                    update_header()
+    # Clear the writing animation
+    writing_animation.empty()
 
-            # If the user has logged in and has no tokens left, will prompt him to recharge
-            if st.session_state.USER.n_tokens <= 0:
-                prompt_box.empty()
-                st.warning("你的消息次数已用完，请充值")
-                st.stop()
+    if DEBUG:
+        prompt_tokens = tokenizer.tokenize(prompt)
+        st.write(f"Prompt length: {len(prompt_tokens)} tokens")
 
-        elif len(st.session_state.LOG) > DEMO_HISTORY_LIMIT:
-            st.warning(f"**公测版，限{DEMO_HISTORY_LIMIT}条消息的对话**\n\n感谢您对我们的兴趣，想获取更多消息次数可以登录哦！")
-            prompt_box.empty()
+    # Update the chat LOG and memories with the actual response
+    st.session_state.LOG[-1] += reply_text
+    st.session_state.MEMORY[-1] += reply_text
+
+    if "USER" in st.session_state:
+        # Consume one user token
+        action_res = st.session_state.USER.consume_token()
+        if action_res['status'] != 0:
+            st.error(f"无法消费消息次数: {action_res['message']}")
             st.stop()
+
+        with header:
+            header_container = st.container()
+            with header_container:
+                update_header()
+
+        # If the user has logged in and has no tokens left, will prompt him to recharge
+        if st.session_state.USER.n_tokens <= 0:
+            prompt_box.empty()
+            st.warning("你的消息次数已用完，请充值")
+            st.stop()
+
+    elif len(st.session_state.LOG) > DEMO_HISTORY_LIMIT:
+        st.warning(f"**公测版，限{DEMO_HISTORY_LIMIT}条消息的对话**\n\n感谢您对我们的兴趣，想获取更多消息次数可以登录哦！")
+        prompt_box.empty()
+        st.stop()
