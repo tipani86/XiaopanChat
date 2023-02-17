@@ -56,11 +56,19 @@ clear_input_script = """
     const streamlitDoc = window.parent.document
     // Find the target input element
     const inputs = Array.from(streamlitDoc.getElementsByTagName('input'))
-    const input = inputs.find(el=> el.ariaLabel === '请输入:')
-    // Clear the input value if it has value
-    if (input.value) {
-        input.value = ''
+    // Find all the inputs with aria-label '请输入:' and clear their value
+    for (let i = 0; i < inputs.length; i++) {
+        if (inputs[i].ariaLabel === '请输入:') {
+            inputs[i].value = ''
+        }
     }
+    /*
+    const input = inputs.find(input => input.ariaLabel === '请输入:')
+        // Clear the input value if it has value or the value is other than ''
+        if (input.value || input.value !== '') {
+            input.value = ''
+        }
+    */
 </script>
 """
 
@@ -113,7 +121,7 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 
 # Initialize/maintain a chat log and chat memory in Streamlit's session state
 # Log is the actual line by line chat, while memory is limited by model's maximum token context length
-init_prompt = "You are an AI assistant called 小潘 (Xiaopan). You're very capable, able to adjust to the various messages from a human and provide helpful replies in the same language as the question was asked in. Add line breaks to structure your reply in paragraphs if it's long. Below is the chat log:"
+init_prompt = "You are an AI assistant called 小潘 (Xiaopan). You're very capable, able to adjust to the various messages from a human and provide helpful replies in the same language as the question was asked in. Add line breaks in your replies to structure them in logical paragraphs. Below is the chat log:"
 if "MEMORY" not in st.session_state:
     st.session_state.MEMORY = [init_prompt]
     st.session_state.LOG = [init_prompt]
@@ -434,7 +442,7 @@ with chat_box:
 
 # Define an input box for human prompts
 with prompt_box:
-    human_prompt = st.text_input("请输入:", key="human_prompt_text")
+    human_prompt = st.text_input("请输入:", value="", key=f"text_input_{len(st.session_state.LOG)}")
 
 # When the user presses Enter, we update the chat log and the model memory
 if len(human_prompt) <= 0:
@@ -499,10 +507,6 @@ with chat_box:
     # Clear the writing animation
     writing_animation.empty()
 
-    if DEBUG:
-        prompt_tokens = tokenizer.tokenize(prompt)
-        st.write(f"Prompt length: {len(prompt_tokens)} tokens")
-
     # Update the chat LOG and memories with the actual response
     st.session_state.LOG[-1] += reply_text
     st.session_state.MEMORY[-1] += reply_text
@@ -529,3 +533,5 @@ with chat_box:
         st.warning(f"**公测版，限{DEMO_HISTORY_LIMIT}条消息的对话**\n\n感谢您对我们的兴趣，想获取更多消息次数可以登录哦！")
         prompt_box.empty()
         st.stop()
+
+st.experimental_rerun()
