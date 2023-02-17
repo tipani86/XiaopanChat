@@ -10,6 +10,7 @@ import calendar
 import numpy as np
 import streamlit as st
 from streamlit_modal import Modal
+from streamlit_chat import message
 import streamlit.components.v1 as components
 from utils import AzureTableOp, User
 from transformers import AutoTokenizer
@@ -70,46 +71,16 @@ def get_tokenizer():
 
 @st.cache_data(show_spinner=False)
 def get_js():
-    # Add Javascript web trackers and a cool hack to enable Enter key to submit
-    # (Ref: https://www.youtube.com/watch?v=SLyS0v8br20)
-    return f"""
-<script type="text/javascript">
+    # Read javascript web trackers code from script.js file
+    with open(os.path.join(ROOT_DIR, "src", "script.js"), "r") as f:
+        return f"<script type='text/javascript'>{f.read()}</script>"
 
-// Microsoft Clarity Tracker
-(function(c,l,a,r,i,t,y){{
-    c[a]=c[a]||function(){{(c[a].q=c[a].q||[]).push(arguments)}};
-    t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
-    y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
-}})(window, document, "clarity", "script", "fuwdd48n5i");
 
-/*
-// Piwik Pro Tracker (Seems like to call on Google, so doesn't work in China)
-(function(window, document, dataLayerName, id) {{
-    window[dataLayerName]=window[dataLayerName]||[],window[dataLayerName].push({{start:(new Date).getTime(),event:"stg.start"}});var scripts=document.getElementsByTagName('script')[0],tags=document.createElement('script');
-    function stgCreateCookie(a,b,c){{var d="";if(c){{var e=new Date;e.setTime(e.getTime()+24*c*60*60*1e3),d="; expires="+e.toUTCString()}}document.cookie=a+"="+b+d+"; path=/"}}
-    var isStgDebug=(window.location.href.match("stg_debug")||document.cookie.match("stg_debug"))&&!window.location.href.match("stg_disable_debug");stgCreateCookie("stg_debug",isStgDebug?1:"",isStgDebug?14:-1);
-    var qP=[];dataLayerName!=="dataLayer"&&qP.push("data_layer_name="+dataLayerName),isStgDebug&&qP.push("stg_debug");var qPString=qP.length>0?("?"+qP.join("&")):"";
-    tags.async=!0,tags.src="https://xiaopan.containers.piwik.pro/"+id+".js"+qPString,scripts.parentNode.insertBefore(tags,scripts);
-    !function(a,n,i){{a[n]=a[n]||{{}};for(var c=0;c<i.length;c++)!function(i){{a[n][i]=a[n][i]||{{}},a[n][i].api=a[n][i].api||function(){{var a=[].slice.call(arguments,0);"string"==typeof a[0]&&window[dataLayerName].push({{event:n+"."+i+":"+a[0],parameters:[].slice.call(arguments,1)}})}}}}(i[c])}}(window,"ppms",["tm","cm"]);
-}})(window, document, 'dataLayer', '84ddea31-5408-4d83-a6fe-ffe81f25b029');
-
-// Cool hack to enable Enter key to submit (but doesn't work after the first press)
-const streamlitDoc = window.parent.document;
-const buttons = Array.from(streamlitDoc.querySelectorAll('.stButton > button'));
-console.log(buttons) // find buttons in console tab
-const submit_button = buttons.find(el => el.innerText === '发送');
-streamlitDoc.addEventListener('keydown', function(e) {{
-    switch (e.key) {{
-        case 'Enter':
-            console.log('Enter pressed');
-            submit_button.click();
-            break;
-    }}
-}});
-*/
-
-</script>
-"""
+@st.cache_data(show_spinner=False)
+def get_css():
+    # Read CSS code from style.css file
+    with open(os.path.join(ROOT_DIR, "src", "style.css"), "r") as f:
+        return f"<style>{f.read()}</style>"
 
 
 # Load WeChat login configuration
@@ -167,6 +138,7 @@ def generate_prompt_from_memory():
         # Strategy: We keep the first item of memory (original prompt), and last three items
         # (last AI message, human's reply, and the 'AI:' prompt) intact, and summarize the middle part
         summarizable_memory = st.session_state.MEMORY[1:-3]
+
         # We write a new prompt asking the model to summarize this middle part
         summarizable_memory = summarizable_memory + [
             "What you saw above is the conversation so far between you, the AI assistant, and a human user. Please summarize the topics discussed. Remember, do not write a direct reply to the user."
@@ -214,14 +186,14 @@ def generate_prompt_from_memory():
                 new_prompt = "\n".join(st.session_state.MEMORY)
 
                 if DEBUG:
-                    print("Summarization triggered. New prompt:")
-                    print(new_prompt)
+                    st.info(f"Summarization triggered. New prompt:\n\n{new_prompt}")
 
                 return new_prompt
 
         st.error("小潘AI出错了: 你的消息太长了，小潘AI无法处理")
         st.stop()
 
+    # No need to summarize, just return the original prompt
     return memory_str
 
 
@@ -229,37 +201,18 @@ with st.spinner("应用首次初始化中..."):
     azure_table_op = get_table_op()
     tokenizer = get_tokenizer()
 
-padding = 2
-st.markdown(f"""
-<style>
-    # MainMenu {{
-        visibility: hidden;
-    }}
-    footer {{
-        visibility: hidden;
-    }}
-    blockquote {{
-        text-align: right;
-    }}
-    .appview-container .main .block-container {{
-        padding-top: {padding}rem;
-        padding-bottom: 0rem;
-    }}
-    # .row-widget .stButton {{
-    #     display: none;
-    # }}
-</style>
-""", unsafe_allow_html=True)
-
+# Load CSS code
+st.markdown(get_css(), unsafe_allow_html=True)
 
 # Load JS code
 components.html(get_js(), height=0, width=0)
 
-# Define overall layout
+# Read browser query params and save them in session state
 query_params = st.experimental_get_query_params()
 if DEBUG:
     st.write(f"`Query params: {query_params}`")
 
+# Define overall layout
 header = st.empty()
 
 # Define header and login popups
@@ -457,11 +410,15 @@ if clicked:
         contents = line.split("Human: ")[1]
         st.markdown(f"> `我`: {contents}")
 
-        # Call the OpenAI API to generate a response with retry, cooldown and backoff
+        # A cool streaming output method by constantly writing to a placeholder element
+        # (Ref: https://medium.com/@avra42/how-to-stream-output-in-chatgpt-style-while-using-openai-completion-method-b90331c15e85)
         reply_box = st.empty()
-        writing_indicator = st.empty()
-        writing_indicator.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;<img src='data:image/gif;base64,{get_loading_gif()}' width=30 height=10>", unsafe_allow_html=True)
 
+        # This is one of those small three-dot animations to indicate the bot is "writing"
+        writing_animation = st.empty()
+        writing_animation.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;<img src='data:image/gif;base64,{get_loading_gif()}' width=30 height=10>", unsafe_allow_html=True)
+
+        # Call the OpenAI API to generate a response with retry, cooldown and backoff
         for i in range(N_RETRIES):
             try:
                 reply_box.markdown(f"`小潘`: ")
@@ -471,8 +428,6 @@ if clicked:
                     prompt_tokens = tokenizer.tokenize(prompt)
                     st.write(f"Prompt length: {len(prompt_tokens)} tokens")
 
-                # A cool streaming output method
-                # (Ref: https://medium.com/@avra42/how-to-stream-output-in-chatgpt-style-while-using-openai-completion-method-b90331c15e85)
                 for resp in openai.Completion.create(
                     model=NLP_MODEL_NAME,
                     prompt=prompt,
@@ -495,7 +450,9 @@ if clicked:
                 else:
                     time.sleep(COOLDOWN * BACKOFF ** i)
 
-        writing_indicator.empty()
+        # Clear the writing animation
+        writing_animation.empty()
+
         # Update the chat LOG and memories with the actual response
         st.session_state.LOG[-1] += reply_text
         st.session_state.MEMORY[-1] += reply_text

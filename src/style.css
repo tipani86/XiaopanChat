@@ -1,0 +1,16 @@
+    #MainMenu {
+        visibility: hidden;
+    }
+
+    footer {
+        visibility: hidden;
+    }
+
+    blockquote {
+        text-align: right;
+    }
+
+    .appview-container .main .block-container {
+        padding-top: 2rem;
+        padding-bottom: 0rem;
+    }

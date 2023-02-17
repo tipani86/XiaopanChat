@@ -1,6 +1,7 @@
 openai
 qrcode
 streamlit
+streamlit-chat
 streamlit-modal
 azure-core
 azure-data-tables
