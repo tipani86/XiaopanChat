@@ -121,7 +121,7 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 
 # Initialize/maintain a chat log and chat memory in Streamlit's session state
 # Log is the actual line by line chat, while memory is limited by model's maximum token context length
-init_prompt = "You are an AI assistant called 小潘 (Xiaopan). You're very capable, able to adjust to the various messages from a human and provide helpful replies in the same language as the question was asked in. Add line breaks in your replies to structure them in logical paragraphs. Below is the chat log:"
+init_prompt = "You are an AI assistant called 小潘 (Xiaopan). You're very capable, able to adjust to the various messages from a human and provide helpful replies in the same language as the question was asked in. Your replies are well paragraphed, separated by line breaks. Below is the chat log:"
 if "MEMORY" not in st.session_state:
     st.session_state.MEMORY = [init_prompt]
     st.session_state.LOG = [init_prompt]
@@ -187,7 +187,7 @@ def generate_prompt_from_memory():
 
         # We write a new prompt asking the model to summarize this middle part
         summarizable_memory = summarizable_memory + [
-            "What you saw above is the conversation so far between you, the AI assistant, and a human user. Please summarize the topics discussed. Remember, do not write a direct reply to the user."
+            "The above is the conversation so far between you, the AI assistant, and a human user. Please summarize the topics discussed. Remember, do not write a direct reply to the user."
         ]
         summarizable_str = "\n".join(summarizable_memory)
         summarizable_tokens = tokenizer.tokenize(summarizable_str)
