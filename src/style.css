@@ -7,7 +7,7 @@
     }
 
     .appview-container .main .block-container {
-        padding-top: 2rem;
+        padding-top: 3rem;
         padding-bottom: 0rem;
     }
 
@@ -18,7 +18,7 @@
 
     .human-line {
         display: flex;
-        font-family: "Source Sans Pro", sans-serif, "Segoe UI", Roboto, sans-serif;
+        font-family: "Source Sans Pro", sans-serif, "Segoe UI", "Roboto", sans-serif;
         height: auto;
         margin: 5px;
         width: 100%;
@@ -27,7 +27,7 @@
 
     .AI-line {
         display: flex;
-        font-family: "Source Sans Pro", sans-serif, "Segoe UI", Roboto, sans-serif;
+        font-family: "Source Sans Pro", sans-serif, "Segoe UI", "Roboto", sans-serif;
         height: auto;
         margin: 5px;
         width: 100%;

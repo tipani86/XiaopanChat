@@ -273,133 +273,8 @@ def update_sidebar():
                             st.write(f"**{set_name}** button pressed")
 
 
-def generate_prompt_from_memory():
-    # Check whether tokenized model memory so far + max reply length exceeds the max possible tokens
-    memory_str = "\n".join(st.session_state.MEMORY)
-    memory_tokens = tokenizer.tokenize(memory_str)
-    if len(memory_tokens) + NLP_MODEL_REPLY_MAX_TOKENS > NLP_MODEL_MAX_TOKENS:
-        # Strategy: We keep the first item of memory (original prompt), and last three items
-        # (last AI message, human's reply, and the 'AI:' prompt) intact, and summarize the middle part
-        summarizable_memory = st.session_state.MEMORY[1:-3]
-
-        # We write a new prompt asking the model to summarize this middle part
-        summarizable_memory = summarizable_memory + [
-            "The above is the conversation so far between you, the AI assistant, and a human user. Please summarize the topics discussed. Remember, do not write a direct reply to the user."
-        ]
-        summarizable_str = "\n".join(summarizable_memory)
-        summarizable_tokens = tokenizer.tokenize(summarizable_str)
-
-        # Check whether the summarizable tokens + 75% of the reply length exceeds the max possible tokens.
-        # If so, adjust down to 50% of the reply length and try again, lastly if even 25% of the reply tokens still exceed, call an error.
-        for ratio in [0.75, 0.5, 0.25]:
-            if len(summarizable_tokens) + int(NLP_MODEL_REPLY_MAX_TOKENS * ratio) <= NLP_MODEL_MAX_TOKENS:
-                # Call the OpenAI API with retry and all that shebang
-                for i in range(N_RETRIES):
-                    try:
-                        response = openai.Completion.create(
-                            model=NLP_MODEL_NAME,
-                            prompt=summarizable_str,
-                            temperature=NLP_MODEL_TEMPERATURE,
-                            max_tokens=int(NLP_MODEL_REPLY_MAX_TOKENS * ratio),
-                            frequency_penalty=NLP_MODEL_FREQUENCY_PENALTY,
-                            presence_penalty=NLP_MODEL_PRESENCE_PENALTY,
-                            stop=NLP_MODEL_STOP_WORDS,
-                        )
-                        break
-                    except Exception as e:
-                        if i == N_RETRIES - 1:
-                            st.error(f"小潘AI出错了: {e}")
-                            st.stop()
-                        else:
-                            time.sleep(COOLDOWN * BACKOFF ** i)
-                summary_text = response["choices"][0]["text"].strip()
-
-                # Re-build memory so it consists of the original prompt, a note that a summary follows,
-                # the actual summary, a second note that the last two conversation items follow,
-                # then the last three items from the original memory
-                new_memory = st.session_state.MEMORY[:1] + [
-                    "Before the actual log, here's a summary of the conversation so far:"
-                ] + [summary_text] + [
-                    "The summary ends. And here are the last two messages from the conversation before your reply:"
-                ] + st.session_state.MEMORY[-3:]
-
-                st.session_state.MEMORY = new_memory
-
-                # Re-generate prompt from new memory
-                new_prompt = "\n".join(st.session_state.MEMORY)
-
-                if DEBUG:
-                    st.info(f"Summarization triggered. New prompt:\n\n{new_prompt}")
-
-                return new_prompt
-
-        st.error("小潘AI出错了: 你的消息太长了，小潘AI无法处理")
-        st.stop()
-
-    # No need to summarize, just return the original prompt
-    return memory_str
-
-
-with st.spinner("应用首次初始化中..."):
-    azure_table_op = get_table_op()
-    tokenizer = get_tokenizer()
-
-# Load CSS code
-st.markdown(get_css(), unsafe_allow_html=True)
-
-# Load JS code
-components.html(get_js(), height=0, width=0)
-
-# Read browser query params and save them in session state
-query_params = st.experimental_get_query_params()
-if DEBUG:
-    st.write(f"`Query params: {query_params}`")
-
-
-# Define login popup
-login_popup = Modal(title=None, key="login_popup", padding=40, max_width=204)
-
-# Define add credit popup
-add_credit_popup = Modal(title="充值", key="add_credit_popup", max_width=700)
-
-# Define a placeholder container for the sidebar
-sidebar_placeholder = st.sidebar.empty()
-
-
-### MAIN STREAMLIT UI STARTS HERE ###
-
-# Define overall layout
-header = st.empty()
-st.subheader("")
-st.title("你好，")
-st.subheader("我是小潘AI，来跟我说点什么吧！")
-st.subheader("")
-chat_box = st.container()
-st.write("")
-prompt_box = st.empty()
-footer = st.container()
-
-
-with header:
-    if "USER" not in st.session_state:
-        header_container = st.container()
-        with header_container:
-            col1, col2 = st.columns([1, 9])
-            with col1:
-                start_login = st.button("登录", key=f"login_button_{len(st.session_state.LOG)}")
-            with col2:
-                st.markdown(f"<small>免登录试用版，最多</small>`{DEMO_HISTORY_LIMIT}`<small>条消息的对话，登录后可获取更多聊天资格哦!</small>", unsafe_allow_html=True)
-        if start_login:
-            login_popup.open()
-
-    else:
-        header_container = st.container()
-        with header_container:
-            update_header()
-
-# Render the login popup with all the login logic included
-if login_popup.is_open():
-    with login_popup.container():
+def render_login_popup(popup_container):
+    with popup_container:
         st.write("")
         # Step 1: Display QR code
         popup_content = st.empty()
@@ -512,6 +387,12 @@ if login_popup.is_open():
                     # Delete the temp entry from the table
                     table_res = azure_table_op.delete_entity(entity, table_name)
 
+                    # Pull out the sidebar now that the user has logged in
+                    with st.sidebar:
+                        with sidebar_placeholder:
+                            st.subheader("登录中...")
+                    components.html(toggle_sidebar_script, height=0, width=0)
+
                     # Create/update full user data
                     action_res = st.session_state.USER.sync_from_db()
                     if action_res['status'] == 3:   # User not found, new user
@@ -531,13 +412,136 @@ if login_popup.is_open():
                             st.error(f"无法更新IP地址: {action_res['message']}")
                             st.stop()
 
-                    # Pull out the sidebar now that the user has logged in
-                    components.html(toggle_sidebar_script, height=0, width=0)
-                    time.sleep(3)
+
+def generate_prompt_from_memory():
+    # Check whether tokenized model memory so far + max reply length exceeds the max possible tokens
+    memory_str = "\n".join(st.session_state.MEMORY)
+    memory_tokens = tokenizer.tokenize(memory_str)
+    if len(memory_tokens) + NLP_MODEL_REPLY_MAX_TOKENS > NLP_MODEL_MAX_TOKENS:
+        # Strategy: We keep the first item of memory (original prompt), and last three items
+        # (last AI message, human's reply, and the 'AI:' prompt) intact, and summarize the middle part
+        summarizable_memory = st.session_state.MEMORY[1:-3]
+
+        # We write a new prompt asking the model to summarize this middle part
+        summarizable_memory = summarizable_memory + [
+            "The above is the conversation so far between you, the AI assistant, and a human user. Please summarize the topics discussed. Remember, do not write a direct reply to the user."
+        ]
+        summarizable_str = "\n".join(summarizable_memory)
+        summarizable_tokens = tokenizer.tokenize(summarizable_str)
+
+        # Check whether the summarizable tokens + 75% of the reply length exceeds the max possible tokens.
+        # If so, adjust down to 50% of the reply length and try again, lastly if even 25% of the reply tokens still exceed, call an error.
+        for ratio in [0.75, 0.5, 0.25]:
+            if len(summarizable_tokens) + int(NLP_MODEL_REPLY_MAX_TOKENS * ratio) <= NLP_MODEL_MAX_TOKENS:
+                # Call the OpenAI API with retry and all that shebang
+                for i in range(N_RETRIES):
+                    try:
+                        response = openai.Completion.create(
+                            model=NLP_MODEL_NAME,
+                            prompt=summarizable_str,
+                            temperature=NLP_MODEL_TEMPERATURE,
+                            max_tokens=int(NLP_MODEL_REPLY_MAX_TOKENS * ratio),
+                            frequency_penalty=NLP_MODEL_FREQUENCY_PENALTY,
+                            presence_penalty=NLP_MODEL_PRESENCE_PENALTY,
+                            stop=NLP_MODEL_STOP_WORDS,
+                        )
+                        break
+                    except Exception as e:
+                        if i == N_RETRIES - 1:
+                            st.error(f"小潘AI出错了: {e}")
+                            st.stop()
+                        else:
+                            time.sleep(COOLDOWN * BACKOFF ** i)
+                summary_text = response["choices"][0]["text"].strip()
+
+                # Re-build memory so it consists of the original prompt, a note that a summary follows,
+                # the actual summary, a second note that the last two conversation items follow,
+                # then the last three items from the original memory
+                new_memory = st.session_state.MEMORY[:1] + [
+                    "Before the actual log, here's a summary of the conversation so far:"
+                ] + [summary_text] + [
+                    "The summary ends. And here are the last two messages from the conversation before your reply:"
+                ] + st.session_state.MEMORY[-3:]
+
+                st.session_state.MEMORY = new_memory
+
+                # Re-generate prompt from new memory
+                new_prompt = "\n".join(st.session_state.MEMORY)
+
+                if DEBUG:
+                    st.info(f"Summarization triggered. New prompt:\n\n{new_prompt}")
+
+                return new_prompt
+
+        st.error("小潘AI出错了: 你的消息太长了，小潘AI无法处理")
+        st.stop()
+
+    # No need to summarize, just return the original prompt
+    return memory_str
+
+
+### MAIN STREAMLIT UI STARTS HERE ###
+
+# Define main layout
+header = st.empty()
+st.header("你好，")
+st.subheader("我是小潘AI，来跟我说点什么吧！")
+st.subheader("")
+chat_box = st.container()
+st.write("")
+prompt_box = st.empty()
+footer = st.container()
+
+# Define a placeholder container for the sidebar
+sidebar_placeholder = st.sidebar.empty()
+
+# Define login popup
+login_popup = Modal(title=None, key="login_popup", padding=40, max_width=204)
+
+# Define add credit popup
+add_credit_popup = Modal(title="充值", key="add_credit_popup", max_width=700)
+
+
+with st.spinner("应用首次初始化中..."):
+    azure_table_op = get_table_op()
+    tokenizer = get_tokenizer()
+
+
+# Load CSS code
+st.markdown(get_css(), unsafe_allow_html=True)
+
+# Load JS code
+components.html(get_js(), height=0, width=0)
+
+# # Read browser query params and save them in session state
+# query_params = st.experimental_get_query_params()
+# if DEBUG:
+#     st.write(f"`Query params: {query_params}`")
+
+# Render header in two ways, depending on whether user is logged in or not
+with header:
+    if "USER" not in st.session_state:
+        header_container = st.container()
+        with header_container:
+            col1, col2 = st.columns([1, 9])
+            with col1:
+                start_login = st.button("登录", key=f"login_button_{len(st.session_state.LOG)}")
+            with col2:
+                st.markdown(f"<small>免登录试用版，最多</small>`{DEMO_HISTORY_LIMIT}`<small>条消息的对话，登录后可获取更多聊天资格哦!</small>", unsafe_allow_html=True)
+        if start_login:
+            login_popup.open()
+
+    else:
+        header_container = st.container()
+        with header_container:
+            update_header()
+
+# Render the login popup with all the login logic included
+if login_popup.is_open():
+    with login_popup.container() as popup_container:
+        render_login_popup(popup_container)
 
     login_popup.close()
-
-# Main layout
 
 # Populate the sidebar with user info if the user is logged in
 if "USER" in st.session_state:
@@ -548,10 +552,6 @@ else:
     with st.sidebar:
         with sidebar_placeholder:
             st.subheader("请登录")
-
-with footer:
-    st.info("免责声明：聊天机器人的输出基于用海量互联网文本数据训练的大型语言模型，仅供娱乐。对于信息的准确性、完整性、及时性等，小潘AI不承担任何责任。", icon="ℹ️")
-    st.markdown(f"<p style='text-align: right'><small><i><font color=gray>Build: {build_date}</font></i></small></p>", unsafe_allow_html=True)
 
 # Render the chat log (without the initial prompt, of course)
 with chat_box:
@@ -663,5 +663,10 @@ with chat_box:
         st.warning(f"**公测版，限{DEMO_HISTORY_LIMIT}条消息的对话**\n\n感谢您对我们的兴趣，想获取更多消息次数可以登录哦！")
         prompt_box.empty()
         st.stop()
+
+
+with footer:
+    st.info("免责声明：聊天机器人的输出基于用海量互联网文本数据训练的大型语言模型，仅供娱乐。对于信息的准确性、完整性、及时性等，小潘AI不承担任何责任。", icon="ℹ️")
+    st.markdown(f"<p style='text-align: right'><small><i><font color=gray>Build: {build_date}</font></i></small></p>", unsafe_allow_html=True)
 
 st.experimental_rerun()
