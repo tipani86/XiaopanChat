@@ -32,7 +32,11 @@
         display: inline-block;
         border: 1px solid transparent;
         border-radius: 10px;
-        padding: 10px 10px;
-        margin: 5px 5px;
+        padding: 5px 10px;
+        margin: 0px 5px;
         max-width: 70%;
+    }
+
+    .chat-icon {
+        border-radius: 5px;
     }

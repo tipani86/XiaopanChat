@@ -7,6 +7,7 @@ import qrcode
 import requests
 import datetime
 import calendar
+import humanize
 import numpy as np
 import streamlit as st
 from streamlit_modal import Modal
@@ -88,14 +89,15 @@ def get_local_img(file_path):
 def get_tokenizer():
     return AutoTokenizer.from_pretrained("gpt2", low_cpu_mem_usage=True)
 
-@st.cache_data(show_spinner=False)
+
+# @st.cache_data(show_spinner=False)
 def get_js():
     # Read javascript web trackers code from script.js file
     with open(os.path.join(ROOT_DIR, "src", "script.js"), "r") as f:
         return f"<script type='text/javascript'>{f.read()}</script>"
 
 
-@st.cache_data(show_spinner=False)
+# @st.cache_data(show_spinner=False)
 def get_css():
     # Read CSS code from style.css file
     with open(os.path.join(ROOT_DIR, "src", "style.css"), "r") as f:
@@ -133,6 +135,7 @@ if "MEMORY" not in st.session_state:
 st.set_page_config(
     page_title="小潘AI",
     page_icon="https://openaiapi-site.azureedge.net/public-assets/d/377f6a405e/favicon.svg",
+    initial_sidebar_state="auto",
 )
 
 
@@ -152,7 +155,7 @@ def get_chat_message(
         else:
             file_path = os.path.join(ROOT_DIR, "src", "user_icon.png")
             src = f"data:image/gif;base64,{get_local_img(file_path)}"
-    icon_code = f"<img src='{src}' width=32 height=32 alt='avatar'>"
+    icon_code = f"<img class='chat-icon' src='{src}' width=32 height=32 alt='avatar'>"
     formatted_contents = f"""
     <div class="{div_class}">
         {icon_code}
@@ -173,8 +176,30 @@ def update_header():
     if st.session_state.USER.n_tokens < 10:
         header_text += "， 请立即<b>充值</b>"
     st.markdown(f"""
-    <table style="border-collapse: collapse; border: none;" cellspacing=0 cellpadding=0 width="100%"><tr style="border: none;"><td style="border: none;" align="right"><small>{header_text}</small></td><td style="border: none;" width=25 align="right"><img height=25 width=25 src="{st.session_state.USER.avatar_url}" alt="avatar"></td></tr></table>
+    <div class="human-line">
+        <div><small>{header_text}</small></div>
+    </div>
     """, unsafe_allow_html=True)
+
+
+def update_sidebar():
+    with st.sidebar:
+        st.header("用户信息")
+        st.markdown(f"<small><b>ID:</b> {st.session_state.USER.user_id}</small>", unsafe_allow_html=True)
+        col1, col2 = st.columns(2)
+        with col1:
+            st.image(st.session_state.USER.avatar_url, width=100)
+            st.subheader(st.session_state.USER.nickname)
+        with col2:
+            st.metric("剩余聊天币", st.session_state.USER.n_tokens)
+
+        # Calculate and display user's IP history and time
+        d = datetime.datetime.now()
+        timestamp_now = calendar.timegm(d.timetuple())
+
+        # We need to read the IP history in reverse order
+        for timestamp, ip in reversed(st.session_state.USER.ip_history):
+            st.write(f"{ip} @ {datetime.datetime.fromtimestamp(timestamp)}")
 
 
 def generate_prompt_from_memory():
@@ -345,8 +370,8 @@ if login_popup.is_open():
 
                 st.image(qr_img, caption="请使用微信扫描二维码登录", output_format="PNG")
 
-                # Poll the login status every 3 seconds and close the popup when login is successful
-                while True:
+                # Poll the login status every 3 seconds and close the popup when login is successful, or timeout after 30 seconds.
+                for i in range(10):
                     time.sleep(3)
 
                     query_filter = f"PartitionKey eq @channel and RowKey eq @user_id"
@@ -363,6 +388,10 @@ if login_popup.is_open():
 
                     if 'data' in entity and entity['data'] is not None:
                         break
+                if 'data' not in entity or entity['data'] is None:
+                    login_popup.close()
+                    st.error("登录超时，请重试")
+                    st.stop()
 
         popup_content.empty()
         time.sleep(0.1)
@@ -414,6 +443,10 @@ if login_popup.is_open():
     login_popup.close()
 
 # Main layout
+
+# Populate the sidebar with user info if the user is logged in
+if "USER" in st.session_state:
+    update_sidebar()
 
 st.subheader("")
 st.subheader("你好，我是小潘AI，来跟我说点什么吧！")
