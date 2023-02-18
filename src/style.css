@@ -11,11 +11,16 @@
         padding-bottom: 0rem;
     }
 
+    .appview-container .css-163ttbj .css-1vq4p4l {
+        padding-top: 2rem;
+        padding-bottom: 0rem;
+    }
+
     .human-line {
         display: flex;
         font-family: "Source Sans Pro", sans-serif, "Segoe UI", Roboto, sans-serif;
         height: auto;
-        margin: 0px;
+        margin: 5px;
         width: 100%;
         flex-direction: row-reverse;
     }
@@ -24,7 +29,7 @@
         display: flex;
         font-family: "Source Sans Pro", sans-serif, "Segoe UI", Roboto, sans-serif;
         height: auto;
-        margin: 0px;
+        margin: 5px;
         width: 100%;
     }
 
