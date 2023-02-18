@@ -17,6 +17,12 @@ from transformers import AutoTokenizer
 
 DEBUG = True
 
+st.set_page_config(
+    page_title="小潘AI",
+    page_icon="https://openaiapi-site.azureedge.net/public-assets/d/377f6a405e/favicon.svg",
+    initial_sidebar_state="collapsed",
+)
+
 # Check environment variables
 
 for key in ["OPENAI_API_KEY", "OPENAI_ORG_ID", "WX_LOGIN_SECRET", "AZURE_STORAGE_CONNECTION_STRING"]:
@@ -72,6 +78,14 @@ clear_input_script = """
             input.value = ''
         }
     */
+</script>
+"""
+
+toggle_sidebar_script = """
+<script>
+    // Toggle sidebar
+    const streamlitDoc = window.parent.document
+    streamlitDoc.getElementsByClassName('css-9s5bis edgvbvh3')[1].click();
 </script>
 """
 
@@ -148,15 +162,6 @@ init_prompt = "You are an AI assistant called 小潘 (Xiaopan). You're very capa
 if "MEMORY" not in st.session_state:
     st.session_state.MEMORY = [init_prompt]
     st.session_state.LOG = [init_prompt]
-
-### MAIN STREAMLIT UI STARTS HERE ###
-
-
-st.set_page_config(
-    page_title="小潘AI",
-    page_icon="https://openaiapi-site.azureedge.net/public-assets/d/377f6a405e/favicon.svg",
-    initial_sidebar_state=st.session_state.get('sidebar_state', 'collapsed'),
-)
 
 
 def get_chat_message(
@@ -354,8 +359,19 @@ add_credit_popup = Modal(title="充值", key="add_credit_popup", max_width=700)
 sidebar_placeholder = st.sidebar.empty()
 
 
+### MAIN STREAMLIT UI STARTS HERE ###
+
 # Define overall layout
 header = st.empty()
+st.subheader("")
+st.title("你好，")
+st.subheader("我是小潘AI，来跟我说点什么吧！")
+st.subheader("")
+chat_box = st.container()
+st.write("")
+prompt_box = st.empty()
+footer = st.container()
+
 
 with header:
     if "USER" not in st.session_state:
@@ -438,8 +454,8 @@ if login_popup.is_open():
 
                 st.image(qr_img, caption="请使用微信扫描二维码登录", output_format="PNG")
 
-                # Poll the login status every 3 seconds and close the popup when login is successful, or timeout after 30 seconds.
-                for i in range(10):
+                # Poll the login status every 3 seconds and close the popup when login is successful, or timeout after 60 seconds.
+                for i in range(20):
                     time.sleep(3)
 
                     query_filter = f"PartitionKey eq @channel and RowKey eq @user_id"
@@ -507,8 +523,12 @@ if login_popup.is_open():
                             login_popup.close()
                             st.error(f"无法更新IP地址: {action_res['message']}")
                             st.stop()
+
+    # Pull out the sidebar now that the user has logged in
+    components.html(toggle_sidebar_script, height=0, width=0)
+    time.sleep(1)
+
     login_popup.close()
-    st.session_state.sidebar_state = "expanded"
 
 # Main layout
 
@@ -522,14 +542,6 @@ else:
         with sidebar_placeholder:
             st.subheader("请登录")
 
-st.subheader("")
-st.title("你好，")
-st.subheader("我是小潘AI，来跟我说点什么吧！")
-st.subheader("")
-chat_box = st.container()
-st.write("")
-prompt_box = st.empty()
-footer = st.container()
 with footer:
     st.info("免责声明：聊天机器人的输出基于用海量互联网文本数据训练的大型语言模型，仅供娱乐。对于信息的准确性、完整性、及时性等，小潘AI不承担任何责任。", icon="ℹ️")
     st.markdown(f"<p style='text-align: right'><small><i><font color=gray>Build: {build_date}</font></i></small></p>", unsafe_allow_html=True)
