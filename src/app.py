@@ -8,6 +8,7 @@ import requests
 import datetime
 import calendar
 import humanize
+import subprocess
 import numpy as np
 import streamlit as st
 from streamlit_modal import Modal
@@ -51,6 +52,12 @@ build_date = "unknown"
 if os.path.isfile("build_date.txt"):
     with open("build_date.txt", "r") as f:
         build_date = f.read()
+else:
+    try:
+        build_date = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD']).decode('ascii').strip()
+    except Exception:
+        print("Failed to get git commit hash. (Not a git repo?)")
+        pass
 
 TIMEOUT = 15
 N_RETRIES = 3
@@ -524,9 +531,9 @@ if login_popup.is_open():
                             st.error(f"无法更新IP地址: {action_res['message']}")
                             st.stop()
 
-    # Pull out the sidebar now that the user has logged in
-    components.html(toggle_sidebar_script, height=0, width=0)
-    time.sleep(1)
+                    # Pull out the sidebar now that the user has logged in
+                    components.html(toggle_sidebar_script, height=0, width=0)
+                    time.sleep(3)
 
     login_popup.close()
 
