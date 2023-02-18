@@ -151,7 +151,7 @@ def get_chat_message(
         else:
             file_path = os.path.join(ROOT_DIR, "src", "user_icon.png")
             src = f"data:image/gif;base64,{get_local_img(file_path)}"
-    icon_code = f"<img src='{src}' width=56 height=56 alt='avatar'>"
+    icon_code = f"<img src='{src}' width=32 height=32 alt='avatar'>"
     formatted_contents = f"""
     <div class="{div_class}">
         {icon_code}
