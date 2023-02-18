@@ -88,13 +88,14 @@ def get_local_img(file_path):
 def get_tokenizer():
     return AutoTokenizer.from_pretrained("gpt2", low_cpu_mem_usage=True)
 
-
+@st.cache_data(show_spinner=False)
 def get_js():
     # Read javascript web trackers code from script.js file
     with open(os.path.join(ROOT_DIR, "src", "script.js"), "r") as f:
         return f"<script type='text/javascript'>{f.read()}</script>"
 
 
+@st.cache_data(show_spinner=False)
 def get_css():
     # Read CSS code from style.css file
     with open(os.path.join(ROOT_DIR, "src", "style.css"), "r") as f:
@@ -141,8 +142,8 @@ def get_chat_message(
 ) -> str:
     div_class = "AI-line"
     color = "rgb(240, 242, 246)"
-    # Generate a random AI avatar from today's date string
-    src = f"https://api.dicebear.com/5.x/lorelei/svg?seed={datetime.datetime.now().strftime('%Y%m%d')}"
+    file_path = os.path.join(ROOT_DIR, "src", "AI_icon.png")
+    src = f"data:image/gif;base64,{get_local_img(file_path)}"
     if align == "right":
         div_class = "human-line"
         color = "rgb(165, 239, 127)"
