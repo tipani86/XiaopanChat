@@ -536,6 +536,11 @@ with header:
         with header_container:
             update_header()
 
+# Render footer
+with footer:
+    st.info("免责声明：聊天机器人的输出基于用海量互联网文本数据训练的大型语言模型，仅供娱乐。对于信息的准确性、完整性、及时性等，小潘AI不承担任何责任。", icon="ℹ️")
+    st.markdown(f"<p style='text-align: right'><small><i><font color=gray>Build: {build_date}</font></i></small></p>", unsafe_allow_html=True)
+
 # Render the login popup with all the login logic included
 if login_popup.is_open():
     with login_popup.container() as popup_container:
@@ -663,10 +668,5 @@ with chat_box:
         st.warning(f"**公测版，限{DEMO_HISTORY_LIMIT}条消息的对话**\n\n感谢您对我们的兴趣，想获取更多消息次数可以登录哦！")
         prompt_box.empty()
         st.stop()
-
-
-with footer:
-    st.info("免责声明：聊天机器人的输出基于用海量互联网文本数据训练的大型语言模型，仅供娱乐。对于信息的准确性、完整性、及时性等，小潘AI不承担任何责任。", icon="ℹ️")
-    st.markdown(f"<p style='text-align: right'><small><i><font color=gray>Build: {build_date}</font></i></small></p>", unsafe_allow_html=True)
 
 st.experimental_rerun()
