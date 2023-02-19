@@ -8,8 +8,10 @@ import requests
 import datetime
 import calendar
 import humanize
+import traceback
 import subprocess
 import numpy as np
+from PIL import Image
 import streamlit as st
 from streamlit_modal import Modal
 import streamlit.components.v1 as components
@@ -18,11 +20,7 @@ from transformers import AutoTokenizer
 
 DEBUG = True
 
-st.set_page_config(
-    page_title="小潘AI",
-    page_icon="https://openaiapi-site.azureedge.net/public-assets/d/377f6a405e/favicon.svg",
-    initial_sidebar_state="collapsed",
-)
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Check environment variables
 
@@ -38,6 +36,11 @@ _t = humanize.i18n.activate("zh_CN")    # Initialize humanize in Simplified Chin
 DEMO_HISTORY_LIMIT = 10
 NEW_USER_FREE_TOKENS = 20
 FREE_TOKENS_PER_REFERRAL = 10
+
+TIMEOUT = 15
+N_RETRIES = 3
+COOLDOWN = 2
+BACKOFF = 1.5
 
 # Below are settings for NLP models, not to be confused with user tokens
 NLP_MODEL_NAME = "text-davinci-003"
@@ -55,16 +58,8 @@ if os.path.isfile("build_date.txt"):
 else:
     try:
         build_date = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD']).decode('ascii').strip()
-    except Exception:
-        print("Failed to get git commit hash. (Not a git repo?)")
-        pass
-
-TIMEOUT = 15
-N_RETRIES = 3
-COOLDOWN = 2
-BACKOFF = 1.5
-
-ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    except Exception as e:
+        print(f"Failed to get git commit hash: {e}")
 
 clear_input_script = """
 <script>
@@ -88,13 +83,15 @@ clear_input_script = """
 </script>
 """
 
-toggle_sidebar_script = """
+expand_sidebar_script = """
 <script>
-    // Toggle sidebar
+    // Expand the sidebar
     const streamlitDoc = window.parent.document
     streamlitDoc.getElementsByClassName('css-9s5bis edgvbvh3')[1].click();
 </script>
 """
+
+# Function definitions
 
 
 @st.cache_resource(show_spinner=False)
@@ -132,43 +129,6 @@ def get_css():
     # Read CSS code from style.css file
     with open(os.path.join(ROOT_DIR, "src", "style.css"), "r") as f:
         return f"<style>{f.read()}</style>"
-
-
-# Load WeChat login configuration and validate its data
-wx_login_cfg_path = os.path.join(ROOT_DIR, "cfg", "wx_login.json")
-if not os.path.isfile(wx_login_cfg_path):
-    st.error("WeChat login configuration file not found.")
-    st.stop()
-
-wx_login_cfg = get_json(wx_login_cfg_path)
-if 'endpoint' not in wx_login_cfg:
-    st.error("WeChat login endpoint not found in configuration file.")
-    st.stop()
-
-
-# Load product catalogue configuration and validate its data
-catalogue_path = os.path.join(ROOT_DIR, "cfg", "catalogue.json")
-if not os.path.isfile(catalogue_path):
-    st.error("Product Catalogue configuration file not found.")
-    st.stop()
-
-catalogue = get_json(catalogue_path)
-for set_name in catalogue:
-    for key in ["price", "product", "amount"]:
-        if key not in catalogue[set_name]:
-            st.error(f"Set {set_name} is missing key {key} in catalogue configuration file.")
-            st.stop()
-
-# Set OpenAI settings
-openai.organization = os.getenv("OPENAI_ORG_ID")
-openai.api_key = os.getenv("OPENAI_API_KEY")
-
-# Initialize/maintain a chat log and chat memory in Streamlit's session state
-# Log is the actual line by line chat, while memory is limited by model's maximum token context length
-init_prompt = "You are an AI assistant called 小潘 (Xiaopan). You're very capable, able to adjust to the various messages from a human and provide helpful replies in the same language as the question was asked in. You can add HTML code to format your responses, for example when asked to list something or produce code (in preformat blocks) Below is the chat log:"
-if "MEMORY" not in st.session_state:
-    st.session_state.MEMORY = [init_prompt]
-    st.session_state.LOG = [init_prompt]
 
 
 def get_chat_message(
@@ -273,7 +233,7 @@ def update_sidebar():
                             st.write(f"**{set_name}** button pressed")
 
 
-def render_login_popup(popup_container):
+def render_login_popup(popup_container, table_op):
     with popup_container:
         st.write("")
         # Step 1: Display QR code
@@ -322,7 +282,7 @@ def render_login_popup(popup_container):
                         'RowKey': temp_user_id,
                         'data': None
                     }
-                    table_res = azure_table_op.update_entities(entity, table_name)
+                    table_res = table_op.update_entities(entity, table_name)
 
                     if table_res['status'] != 0:
                         login_popup.close()
@@ -344,7 +304,7 @@ def render_login_popup(popup_container):
                     select = None
                     parameters = {'channel': "wx_user", 'user_id': temp_user_id}
 
-                    table_res = azure_table_op.query_entities(query_filter, select, parameters, table_name)
+                    table_res = table_op.query_entities(query_filter, select, parameters, table_name)
                     if table_res['status'] != 0:
                         login_popup.close()
                         st.error(f"无法获取用户表: {table_res['message']}")
@@ -380,18 +340,18 @@ def render_login_popup(popup_container):
                     st.session_state.USER = User(
                         channel="wx_user",
                         user_id=user_id,
-                        db_op=azure_table_op,
+                        db_op=table_op,
                         table_name=table_name
                     )
 
                     # Delete the temp entry from the table
-                    table_res = azure_table_op.delete_entity(entity, table_name)
+                    table_res = table_op.delete_entity(entity, table_name)
 
                     # Pull out the sidebar now that the user has logged in
                     with st.sidebar:
                         with sidebar_placeholder:
                             st.subheader("登录中...")
-                    components.html(toggle_sidebar_script, height=0, width=0)
+                    components.html(expand_sidebar_script, height=0, width=0)
 
                     # Create/update full user data
                     action_res = st.session_state.USER.sync_from_db()
@@ -480,32 +440,46 @@ def generate_prompt_from_memory():
     return memory_str
 
 
-### MAIN STREAMLIT UI STARTS HERE ###
+# Load WeChat login configuration and validate its data
+wx_login_cfg_path = os.path.join(ROOT_DIR, "cfg", "wx_login.json")
+if not os.path.isfile(wx_login_cfg_path):
+    st.error("WeChat login configuration file not found.")
+    st.stop()
 
-# Define main layout
-header = st.empty()
-st.header("你好，")
-st.subheader("我是小潘AI，来跟我说点什么吧！")
-st.subheader("")
-chat_box = st.container()
-st.write("")
-prompt_box = st.empty()
-footer = st.container()
+wx_login_cfg = get_json(wx_login_cfg_path)
+if 'endpoint' not in wx_login_cfg:
+    st.error("WeChat login endpoint not found in configuration file.")
+    st.stop()
 
-# Define a placeholder container for the sidebar
-sidebar_placeholder = st.sidebar.empty()
+# Load product catalogue configuration and validate its data
+catalogue_path = os.path.join(ROOT_DIR, "cfg", "catalogue.json")
+if not os.path.isfile(catalogue_path):
+    st.error("Product Catalogue configuration file not found.")
+    st.stop()
 
-# Define login popup
-login_popup = Modal(title=None, key="login_popup", padding=40, max_width=204)
+catalogue = get_json(catalogue_path)
+for set_name in catalogue:
+    for key in ["price", "product", "amount"]:
+        if key not in catalogue[set_name]:
+            st.error(f"Set {set_name} is missing key {key} in catalogue configuration file.")
+            st.stop()
 
-# Define add credit popup
-add_credit_popup = Modal(title="充值", key="add_credit_popup", max_width=700)
+# OpenAI API settings
+openai.organization = os.getenv("OPENAI_ORG_ID")
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
+# Initialize page config
+favicon = Image.open(os.path.join(ROOT_DIR, "src", "AI_icon.png"))
+st.set_page_config(
+    page_title="小潘AI",
+    page_icon=favicon,
+    initial_sidebar_state="collapsed",
+)
 
+# Initialize some useful class instances
 with st.spinner("应用首次初始化中..."):
     azure_table_op = get_table_op()
     tokenizer = get_tokenizer()
-
 
 # Load CSS code
 st.markdown(get_css(), unsafe_allow_html=True)
@@ -518,6 +492,36 @@ components.html(get_js(), height=0, width=0)
 # if DEBUG:
 #     st.write(f"`Query params: {query_params}`")
 
+# Initialize/maintain a chat log and chat memory in Streamlit's session state
+# Log is the actual line by line chat, while memory is limited by model's maximum token context length
+init_prompt = "You are an AI assistant called 小潘 (Xiaopan). You're very capable, able to adjust to the various messages from a human and provide helpful replies in the same language as the question was asked in. You can add HTML code to format your responses, for example when asked to list something or produce code (in preformat blocks) Below is the chat log:"
+if "MEMORY" not in st.session_state:
+    st.session_state.MEMORY = [init_prompt]
+    st.session_state.LOG = [init_prompt]
+
+### MAIN STREAMLIT UI STARTS HERE ###
+
+# Define main layout
+header = st.empty()
+st.header("你好，")
+st.subheader("我是小潘AI，来跟我说点什么吧！")
+st.subheader("")
+chat_box = st.container()
+st.write("")
+prompt_box = st.empty()
+if st.button("Expand sidebar"):
+    components.html(expand_sidebar_script, height=0, width=0)
+footer = st.container()
+
+# Define a placeholder container for the sidebar
+sidebar_placeholder = st.sidebar.empty()
+
+# Define login popup
+login_popup = Modal(title=None, key="login_popup", padding=40, max_width=204)
+
+# Define add credit popup
+add_credit_popup = Modal(title="充值", key="add_credit_popup", max_width=700)
+
 # Render header in two ways, depending on whether user is logged in or not
 with header:
     if "USER" not in st.session_state:
@@ -525,12 +529,10 @@ with header:
         with header_container:
             col1, col2 = st.columns([1, 9])
             with col1:
-                start_login = st.button("登录", key=f"login_button_{len(st.session_state.LOG)}")
+                if st.button("登录", key=f"login_button_{len(st.session_state.LOG)}"):
+                    login_popup.open()
             with col2:
                 st.markdown(f"<small>免登录试用版，最多</small>`{DEMO_HISTORY_LIMIT}`<small>条消息的对话，登录后可获取更多聊天资格哦!</small>", unsafe_allow_html=True)
-        if start_login:
-            login_popup.open()
-
     else:
         header_container = st.container()
         with header_container:
@@ -544,8 +546,7 @@ with footer:
 # Render the login popup with all the login logic included
 if login_popup.is_open():
     with login_popup.container() as popup_container:
-        render_login_popup(popup_container)
-
+        render_login_popup(popup_container, azure_table_op)
     login_popup.close()
 
 # Populate the sidebar with user info if the user is logged in
@@ -556,7 +557,7 @@ if "USER" in st.session_state:
 else:
     with st.sidebar:
         with sidebar_placeholder:
-            st.subheader("请登录")
+            st.subheader("登录后可以查看用户信息")
 
 # Render the chat log (without the initial prompt, of course)
 with chat_box:
@@ -571,102 +572,100 @@ with chat_box:
             contents = line.split("Human: ")[1]
             st.markdown(get_chat_message(contents, align="right"), unsafe_allow_html=True)
 
-
 # Define an input box for human prompts
 with prompt_box:
     human_prompt = st.text_input("请输入:", value="", key=f"text_input_{len(st.session_state.LOG)}")
 
-# When the user presses Enter, we update the chat log and the model memory
-if len(human_prompt) <= 0:
-    st.stop()
+# Gate the subsequent chatbot response to only when the user has entered a prompt
+if len(human_prompt) > 0:
 
-# Strip the prompt of any potentially harmful html/js injections
-human_prompt = human_prompt.replace("<", "&lt;").replace(">", "&gt;")
+    # Strip the prompt of any potentially harmful html/js injections
+    human_prompt = human_prompt.replace("<", "&lt;").replace(">", "&gt;")
 
-# Update both chat log and the model memory (copy two last entries from LOG to MEMORY)
-st.session_state.LOG.append("Human: " + human_prompt)
-st.session_state.LOG.append("AI: ")
-st.session_state.MEMORY.extend(st.session_state.LOG[-2:])
+    # Update both chat log and the model memory (copy two last entries from LOG to MEMORY)
+    st.session_state.LOG.append("Human: " + human_prompt)
+    st.session_state.LOG.append("AI: ")
+    st.session_state.MEMORY.extend(st.session_state.LOG[-2:])
 
-# Run a special JS code to clear the input box after human_prompt is used
-components.html(clear_input_script, height=0, width=0)
+    # Run a special JS code to clear the input box after human_prompt is used
+    components.html(clear_input_script, height=0, width=0)
 
-with chat_box:
-    # Write the latest human message first
-    line = st.session_state.LOG[-2]
-    contents = line.split("Human: ")[1]
-    st.markdown(get_chat_message(contents, align="right"), unsafe_allow_html=True)
+    with chat_box:
+        # Write the latest human message first
+        line = st.session_state.LOG[-2]
+        contents = line.split("Human: ")[1]
+        st.markdown(get_chat_message(contents, align="right"), unsafe_allow_html=True)
 
-    # A cool streaming output method by constantly writing to a placeholder element
-    # (Ref: https://medium.com/@avra42/how-to-stream-output-in-chatgpt-style-while-using-openai-completion-method-b90331c15e85)
-    reply_box = st.empty()
+        # A cool streaming output method by constantly writing to a placeholder element
+        # (Ref: https://medium.com/@avra42/how-to-stream-output-in-chatgpt-style-while-using-openai-completion-method-b90331c15e85)
+        reply_box = st.empty()
 
-    # This is one of those small three-dot animations to indicate the bot is "writing"
-    writing_animation = st.empty()
-    file_path = os.path.join(ROOT_DIR, "src", "loading.gif")
-    writing_animation.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;<img src='data:image/gif;base64,{get_local_img(file_path)}' width=30 height=10>", unsafe_allow_html=True)
+        # This is one of those small three-dot animations to indicate the bot is "writing"
+        writing_animation = st.empty()
+        file_path = os.path.join(ROOT_DIR, "src", "loading.gif")
+        writing_animation.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;<img src='data:image/gif;base64,{get_local_img(file_path)}' width=30 height=10>", unsafe_allow_html=True)
 
-    # Call the OpenAI API to generate a response with retry, cooldown and backoff
-    for i in range(N_RETRIES):
-        try:
-            reply_box.markdown(get_chat_message(), unsafe_allow_html=True)
-            reply = []
-            prompt = generate_prompt_from_memory()
-            for resp in openai.Completion.create(
-                model=NLP_MODEL_NAME,
-                prompt=prompt,
-                temperature=NLP_MODEL_TEMPERATURE,
-                max_tokens=NLP_MODEL_REPLY_MAX_TOKENS,
-                frequency_penalty=NLP_MODEL_FREQUENCY_PENALTY,
-                presence_penalty=NLP_MODEL_PRESENCE_PENALTY,
-                stop=NLP_MODEL_STOP_WORDS,
-                stream=True
-            ):
-                reply.append(resp.choices[0].text)
-                reply_text = "".join(reply).strip()
-                # Visualize the streaming output in real-time
-                reply_box.markdown(get_chat_message(reply_text), unsafe_allow_html=True)
-            break
+        # Call the OpenAI API to generate a response with retry, cooldown and backoff
+        for i in range(N_RETRIES):
+            try:
+                reply_box.markdown(get_chat_message(), unsafe_allow_html=True)
+                reply = []
+                prompt = generate_prompt_from_memory()
+                for resp in openai.Completion.create(
+                    model=NLP_MODEL_NAME,
+                    prompt=prompt,
+                    temperature=NLP_MODEL_TEMPERATURE,
+                    max_tokens=NLP_MODEL_REPLY_MAX_TOKENS,
+                    frequency_penalty=NLP_MODEL_FREQUENCY_PENALTY,
+                    presence_penalty=NLP_MODEL_PRESENCE_PENALTY,
+                    stop=NLP_MODEL_STOP_WORDS,
+                    stream=True
+                ):
+                    reply.append(resp.choices[0].text)
+                    reply_text = "".join(reply).strip()
+                    # Visualize the streaming output in real-time
+                    reply_box.markdown(get_chat_message(reply_text), unsafe_allow_html=True)
+                break
 
-        except Exception as e:
-            if i == N_RETRIES - 1:
-                st.error(f"小潘AI出错了: {e}")
+            except Exception as e:
+                if i == N_RETRIES - 1:
+                    st.error(f"小潘AI出错了: {e}")
+                    st.stop()
+                else:
+                    time.sleep(COOLDOWN * BACKOFF ** i)
+
+        # Clear the writing animation
+        writing_animation.empty()
+
+        # Update the chat LOG and memories with the actual response
+        st.session_state.LOG[-1] += reply_text
+        st.session_state.MEMORY[-1] += reply_text
+
+        if "USER" in st.session_state:
+            # Consume one user token
+            action_res = st.session_state.USER.consume_token()
+            if action_res['status'] != 0:
+                st.error(f"无法消费消息次数: {action_res['message']}")
                 st.stop()
-            else:
-                time.sleep(COOLDOWN * BACKOFF ** i)
 
-    # Clear the writing animation
-    writing_animation.empty()
+            with header:
+                header_container = st.container()
+                with header_container:
+                    update_header()
 
-    # Update the chat LOG and memories with the actual response
-    st.session_state.LOG[-1] += reply_text
-    st.session_state.MEMORY[-1] += reply_text
+            with st.sidebar:
+                with sidebar_placeholder:
+                    update_sidebar()
 
-    if "USER" in st.session_state:
-        # Consume one user token
-        action_res = st.session_state.USER.consume_token()
-        if action_res['status'] != 0:
-            st.error(f"无法消费消息次数: {action_res['message']}")
-            st.stop()
+            # If the user has logged in and has no tokens left, will prompt him to recharge
+            if st.session_state.USER.n_tokens <= 0:
+                prompt_box.empty()
+                st.warning("你的消息次数已用完，请充值")
+                st.stop()
 
-        with header:
-            header_container = st.container()
-            with header_container:
-                update_header()
-
-        with st.sidebar:
-            with sidebar_placeholder:
-                update_sidebar()
-
-        # If the user has logged in and has no tokens left, will prompt him to recharge
-        if st.session_state.USER.n_tokens <= 0:
+        elif len(st.session_state.LOG) > DEMO_HISTORY_LIMIT:
+            st.warning(f"**公测版，限{DEMO_HISTORY_LIMIT}条消息的对话**\n\n感谢您对我们的兴趣，想获取更多消息次数可以登录哦！")
             prompt_box.empty()
-            st.warning("你的消息次数已用完，请充值")
             st.stop()
 
-    elif len(st.session_state.LOG) > DEMO_HISTORY_LIMIT:
-        st.warning(f"**公测版，限{DEMO_HISTORY_LIMIT}条消息的对话**\n\n感谢您对我们的兴趣，想获取更多消息次数可以登录哦！")
-        prompt_box.empty()
-        st.stop()
-
-st.experimental_rerun()
+    st.experimental_rerun()
