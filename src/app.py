@@ -488,6 +488,27 @@ with st.spinner("应用首次初始化中..."):
     azure_table_op = get_table_op()
     tokenizer = get_tokenizer()
 
+### MAIN STREAMLIT UI STARTS HERE ###
+
+# Define main layout
+header = st.empty()
+st.header("你好，")
+st.subheader("我是小潘AI，来跟我说点什么吧！")
+st.subheader("")
+chat_box = st.container()
+st.write("")
+prompt_box = st.empty()
+footer = st.container()
+
+# Define a placeholder container for the sidebar
+sidebar_placeholder = st.sidebar.empty()
+
+# Initialize login popup
+login_popup = Modal(title=None, key="login_popup", padding=40, max_width=204)
+
+# Initialize add credit popup
+add_credit_popup = Modal(title="充值", key="add_credit_popup", max_width=500)
+
 # Load CSS code
 st.markdown(get_css(), unsafe_allow_html=True)
 
@@ -506,28 +527,6 @@ if "MEMORY" not in st.session_state:
     st.session_state.MEMORY = [init_prompt]
     st.session_state.LOG = [init_prompt]
 
-### MAIN STREAMLIT UI STARTS HERE ###
-
-# Define main layout
-header = st.empty()
-st.header("你好，")
-st.subheader("我是小潘AI，来跟我说点什么吧！")
-st.subheader("")
-chat_box = st.container()
-st.write("")
-prompt_box = st.empty()
-footer = st.container()
-if st.button("DEBUG: Expand sidebar"):
-    components.html(expand_sidebar_script, height=0, width=0)
-
-# Define a placeholder container for the sidebar
-sidebar_placeholder = st.sidebar.empty()
-
-# Define login popup
-login_popup = Modal(title=None, key="login_popup", padding=40, max_width=204)
-
-# Define add credit popup
-add_credit_popup = Modal(title="充值", key="add_credit_popup", max_width=700)
 
 # Render header in two ways, depending on whether user is logged in or not
 with header:
