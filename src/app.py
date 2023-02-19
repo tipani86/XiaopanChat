@@ -37,6 +37,9 @@ DEMO_HISTORY_LIMIT = 10
 NEW_USER_FREE_TOKENS = 20
 FREE_TOKENS_PER_REFERRAL = 10
 
+SET_NAMES = ["小白", "进阶"]
+# SET_NAMES = ["小白", "进阶", "王者", "钻石"]
+
 TIMEOUT = 15
 N_RETRIES = 3
 COOLDOWN = 2
@@ -107,9 +110,15 @@ def get_table_op():
 
 
 @st.cache_data(show_spinner=False)
-def get_local_img(file_path):
+def get_local_img(file_path: str) -> str:
     # Load a byte image and return its base64 encoded string
     return base64.b64encode(open(file_path, "rb").read()).decode("utf-8")
+
+
+@st.cache_data(show_spinner=False)
+def get_favicon(file_path: str):
+    # Load a byte image and return its favicon
+    return Image.open(file_path)
 
 
 @st.cache_data(show_spinner=False)
@@ -118,7 +127,7 @@ def get_tokenizer():
 
 
 # @st.cache_data(show_spinner=False)
-def get_json(file_path) -> dict:
+def get_json(file_path: str) -> dict:
     # Load a json file and return its content
     with open(file_path, "r") as f:
         return json.load(f)
@@ -150,7 +159,7 @@ def warm_up_api_server():
                 time.sleep(BACKOFF ** i)
     except Exception as e:
         res['status'] = 2
-        res['msg'] = f"Failed to warm up API server: {e}"
+        res['msg'] = f"Failed to warm up API server!"
     return res
 
 
@@ -188,11 +197,11 @@ def update_header() -> None:
     else:
         header_text = f"欢迎回来 <b>{st.session_state.USER.nickname}</b> ！ "
     if st.session_state.USER.n_tokens <= 0:
-        header_text += "<font color=red>你的消息次数已经全部用完了</font>"
+        header_text += "<font color=red>你的聊天币已经全部用完了</font>"
     else:
         header_text += f"你还有 <b>{st.session_state.USER.n_tokens}</b> 枚聊天币可以用哦"
     if st.session_state.USER.n_tokens < 10:
-        header_text += "， 请立即<b>充值</b>"
+        header_text += "， 请立即前往用户中心充值"
     st.markdown(f"""
     <div class="human-line">
         <div><small>{header_text}</small></div>
@@ -202,15 +211,49 @@ def update_header() -> None:
 
 def update_sidebar() -> None:
     with st.container():
-        st.header("用户信息")
+        st.title("用户中心")
         st.subheader(st.session_state.USER.nickname)
-        st.caption(f"<small>({st.session_state.USER.user_id})</small>", unsafe_allow_html=True)
+        # st.caption(f"<small>({st.session_state.USER.user_id})</small>", unsafe_allow_html=True)
         col1, col2 = st.columns([1, 2])
         with col1:
             st.markdown(f"<img class='chat-icon' src='{st.session_state.USER.avatar_url}' width=64 height=64 alt='avatar'>", unsafe_allow_html=True)
         with col2:
             st.metric("**剩余聊天币**", f"{st.session_state.USER.n_tokens}枚")
-            add_credit = st.button("充值", key=f"add_credit_{len(st.session_state.LOG)}")
+
+        cat_expander = st.expander("聊天币充值")
+        with cat_expander:
+            tabs = st.tabs(SET_NAMES)
+            for i, (tab, set_name_short) in enumerate(zip(tabs, SET_NAMES)):
+                with tab:
+                    set_name = f"{set_name_short}套餐"
+                    display_name = set_name
+                    col1, col2 = st.columns([5, 4])
+                    with col1:
+                        # Always show price with two decimals even if it's integer
+                        price = f"{catalogue[set_name]['price']:.2f}"
+                        if catalogue[set_name]["sale_price"]:
+                            display_name += f" (:red[~~¥{catalogue[set_name]['price']:.2f}~~])"
+                            price = f"{catalogue[set_name]['sale_price']:.2f}"
+                        st.metric(
+                            f"**{display_name}**",
+                            f"¥{price}",
+                            f"{catalogue[set_name]['amount']}{catalogue[set_name]['unit']}{catalogue[set_name]['product']}"
+                        )
+                    with col2:
+                        st.write("**支付码：**")
+                        vars()[f"generate_payment{i+1}"] = st.button("生成", key=f"generate_payment_{set_name}_{len(st.session_state.LOG)}")
+            st.info("**聊天币**数量按照完整的消息来回为一枚，如：10枚聊天币等于20条消息（发送+回复）", icon="ℹ️")
+
+        payment_code_placeholder = st.empty()
+        for i, set_name_short in enumerate(SET_NAMES):
+            var_name = f"generate_payment{i+1}"
+            if var_name in vars() and vars()[var_name]:
+                set_name = f"{set_name_short}套餐"
+                with payment_code_placeholder.container():
+                    st.write(f"**{set_name}** button pressed")
+                    refresh = st.button("支付成功后点此按钮刷新页面", key=f"refresh_{len(st.session_state.LOG)}")
+                if refresh:
+                    st.experimental_rerun()
 
         st.write("")
         with st.expander("最近10次登录历史"):
@@ -223,40 +266,6 @@ def update_sidebar() -> None:
             for timestamp, ip in reversed(st.session_state.USER.ip_history):
                 formatted_ip_history.append(f"{ip}, {humanize.naturaltime(datetime.timedelta(seconds=timestamp_now - timestamp))}")
             st.caption("<br>".join(formatted_ip_history), unsafe_allow_html=True)
-
-        if add_credit:
-            add_credit_popup.open()
-
-        # Render the payments popup
-        if add_credit_popup.is_open():
-            with add_credit_popup.container():
-                set_names = ["小白", "进阶", "王者", "钻石"]
-                tab1, tab2, tab3, tab4 = st.tabs(set_names)
-                for i, (tab, set_name_short) in enumerate(zip([tab1, tab2, tab3, tab4], set_names)):
-                    with tab:
-                        set_name = f"{set_name_short}套餐"
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            price = catalogue[set_name]["price"]
-                            if catalogue[set_name]["sale_price"]:
-                                price = f"~~{catalogue[set_name]['price']}~~ {catalogue[set_name]['sale_price']}"
-                            st.metric(
-                                f"**{set_name}**",
-                                f"¥{price}",
-                                f"{catalogue[set_name]['amount']}{catalogue[set_name]['unit']}{catalogue[set_name]['product']}"
-                            )
-                        with col2:
-                            st.write("**生成支付码：**")
-                            vars()[f"generate_payment{i+1}"] = st.button("立即购买", key=f"generate_payment_{set_name}_{len(st.session_state.LOG)}")
-
-                payment_code_placeholder = st.empty()
-                st.info("**聊天币**数量按照完整的消息来回为一枚，如：10枚聊天币等于20条消息（发送+回复）", icon="ℹ️")
-
-                for i, set_name_short in enumerate(set_names):
-                    if vars()[f"generate_payment{i+1}"]:
-                        set_name = f"{set_name_short}套餐"
-                        with payment_code_placeholder:
-                            st.write(f"**{set_name}** button pressed")
 
 
 def render_login_popup(
@@ -502,7 +511,7 @@ openai.organization = os.getenv("OPENAI_ORG_ID")
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
 # Initialize page config
-favicon = Image.open(os.path.join(ROOT_DIR, "src", "AI_icon.png"))
+favicon = get_favicon(os.path.join(ROOT_DIR, "src", "AI_icon.png"))
 st.set_page_config(
     page_title="小潘AI",
     page_icon=favicon,
@@ -529,7 +538,7 @@ if "WARM_UP" not in st.session_state or not st.session_state.WARM_UP:
 
 # Define main layout
 header = st.empty()
-st.header("你好，")
+st.title("你好，")
 st.subheader("我是小潘AI，来跟我说点什么吧！")
 st.subheader("")
 chat_box = st.container()
@@ -544,9 +553,6 @@ with st.sidebar:
 # Initialize login popup
 login_popup = Modal(title=None, key="login_popup", padding=40, max_width=204)
 
-# Initialize add credit popup
-add_credit_popup = Modal(title="充值", key="add_credit_popup", max_width=500)
-
 # Load CSS code
 st.markdown(get_css(), unsafe_allow_html=True)
 
@@ -560,7 +566,7 @@ components.html(get_js(), height=0, width=0)
 
 # Initialize/maintain a chat log and chat memory in Streamlit's session state
 # Log is the actual line by line chat, while memory is limited by model's maximum token context length
-init_prompt = "You are an AI assistant called 小潘 (Xiaopan). You're very capable, able to adjust to the various messages from a human and provide helpful replies in the same language as the question was asked in. You can add HTML code to format your responses, for example when asked to list something or produce code (in preformat blocks) Below is the chat log:"
+init_prompt = "You are an AI assistant called 小潘 (Xiaopan). You're very capable, able answer various messages from a human user and provide helpful replies. You can add HTML your responses, for example when asked to list something. You have no language preferences, and will always reply in the same language that the human writes. Below is the chat log between you and the human:"
 if "MEMORY" not in st.session_state:
     st.session_state.MEMORY = [init_prompt]
     st.session_state.LOG = [init_prompt]
@@ -577,6 +583,8 @@ if "USER" not in st.session_state:
         with col2:
             st.markdown(f"<small>免登录试用版，最多</small>`{DEMO_HISTORY_LIMIT}`<small>条消息的对话，登录后可获取更多聊天资格哦!</small>", unsafe_allow_html=True)
 else:
+    # Sync user info from database and refresh the sidebar and header displays
+    st.session_state.USER.sync_from_db()
     with sidebar.container():
         update_sidebar()
     with header.container():
@@ -613,6 +621,14 @@ with chat_box:
 with prompt_box:
     human_prompt = st.text_input("请输入:", value="", key=f"text_input_{len(st.session_state.LOG)}")
 
+# If the user has logged in and has no tokens left, will prompt him to recharge
+if "USER" in st.session_state and st.session_state.USER.n_tokens <= 0:
+    with prompt_box:
+        st.warning("不好意思，你的聊天币已用完，请立即前往用户中心充值")
+    components.html(expand_sidebar_script, height=0, width=0)
+    time.sleep(1)
+    st.stop()
+
 # Gate the subsequent chatbot response to only when the user has entered a prompt
 if len(human_prompt) > 0:
 
@@ -626,6 +642,7 @@ if len(human_prompt) > 0:
 
     # Run a special JS code to clear the input box after human_prompt is used
     components.html(clear_input_script, height=0, width=0)
+    prompt_box.empty()
 
     with chat_box:
         # Write the latest human message first
@@ -682,7 +699,7 @@ if len(human_prompt) > 0:
             # Consume one user token
             action_res = st.session_state.USER.consume_token()
             if action_res['status'] != 0:
-                st.error(f"无法消费消息次数: {action_res['message']}")
+                st.error(f"无法消费聊天币: {action_res['message']}")
                 st.stop()
 
             # Update the sidebar and header token number
@@ -690,14 +707,6 @@ if len(human_prompt) > 0:
                 update_sidebar()
             with header.container():
                 update_header()
-
-            # If the user has logged in and has no tokens left, will prompt him to recharge
-            if st.session_state.USER.n_tokens <= 0:
-                with prompt_box:
-                    st.warning("你的聊天币已用完，请在用户中心充值")
-                components.html(expand_sidebar_script, height=0, width=0)
-                time.sleep(1)
-                st.stop()
 
         elif len(st.session_state.LOG) > DEMO_HISTORY_LIMIT:
             st.warning(f"**公测版，限{DEMO_HISTORY_LIMIT}条消息的对话**\n\n感谢您对我们的兴趣，想获取更多消息次数可以登录哦！")

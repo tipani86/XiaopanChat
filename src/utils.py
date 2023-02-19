@@ -243,27 +243,21 @@ class User:
 
     def sync_from_db(self) -> dict:
         res = {'status': 0, 'message': "Success"}
-
         # Fetch the remaining info from database
-
         query_filter = f"PartitionKey eq @channel and RowKey eq @user_id"
         select = None
         parameters = {'channel': self.channel, 'user_id': self.user_id}
-
         db_res = self.db_op.query_entities(query_filter, select, parameters, self.table_name)
         if db_res['status'] != 0:
             return db_res
-
         if len(db_res['data']) <= 0:
             res['status'] = 3
             res['message'] = f"Channel {self.channel} user {self.user_id} not found in database"
             return res
-
         elif len(db_res['data']) > 1:
             res['status'] = 2
             res['message'] = f"Possible data error: more than one entry found with type {self.channel} and user_id {self.user_id}"
             return res
-
         else:
             # Load rest of the info
             entity = db_res['data'][0]
@@ -271,7 +265,6 @@ class User:
             self.nickname = entity['nickname']
             self.avatar_url = entity['avatar_url']
             self.ip_history = json.loads(entity['ip_history'])
-
         return res
 
     def sync_to_db(self) -> dict:
@@ -283,7 +276,6 @@ class User:
             'avatar_url': self.avatar_url,
             'ip_history': json.dumps(self.ip_history),
         }
-
         return self.db_op.update_entities(entity, self.table_name)
 
     def initialize_on_db(
@@ -304,14 +296,15 @@ class User:
         }
 
         db_res = self.db_op.update_entities(entity, self.table_name)
-
         if db_res['status'] != 0:
             return db_res
-
         return self.sync_from_db()
 
     def consume_token(self) -> dict:
         res = {'status': 0, 'message': "Success"}
+        api_res = self.sync_from_db()
+        if api_res['status'] != 0:
+            return api_res
         if self.n_tokens <= 0:
             res['status'] = 2
             res['message'] = f"User {self.user_id} has no tokens left"
