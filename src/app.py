@@ -118,24 +118,40 @@ def get_tokenizer():
 
 
 # @st.cache_data(show_spinner=False)
-def get_json(file_path):
+def get_json(file_path) -> dict:
     # Load a json file and return its content
     with open(file_path, "r") as f:
         return json.load(f)
 
 
 # @st.cache_data(show_spinner=False)
-def get_js():
+def get_js() -> str:
     # Read javascript web trackers code from script.js file
     with open(os.path.join(ROOT_DIR, "src", "script.js"), "r") as f:
         return f"<script type='text/javascript'>{f.read()}</script>"
 
 
 # @st.cache_data(show_spinner=False)
-def get_css():
+def get_css() -> str:
     # Read CSS code from style.css file
     with open(os.path.join(ROOT_DIR, "src", "style.css"), "r") as f:
         return f"<style>{f.read()}</style>"
+
+
+def warm_up_api_server():
+    res = {'status': 0, 'msg': "Success"}
+    # Warm up Xiaopan API server with retry, backoff etc.
+    try:
+        for i in range(N_RETRIES):
+            r = requests.get("https://xiaopan-chat-api.azurewebsites.net/", timeout=TIMEOUT)
+            if r.status_code == 200:
+                break
+            else:
+                time.sleep(BACKOFF ** i)
+    except Exception as e:
+        res['status'] = 2
+        res['msg'] = f"Failed to warm up API server: {e}"
+    return res
 
 
 def get_chat_message(
@@ -166,8 +182,11 @@ def get_chat_message(
     return formatted_contents
 
 
-def update_header():
-    header_text = f"欢迎回来 <b>{st.session_state.USER.nickname}</b> ！ "
+def update_header() -> None:
+    if "NEW_USER" in st.session_state and st.session_state.NEW_USER:
+        header_text = f"<font color=red>欢迎加入小潘AI</font> <b>{st.session_state.USER.nickname}</b> ！ "
+    else:
+        header_text = f"欢迎回来 <b>{st.session_state.USER.nickname}</b> ！ "
     if st.session_state.USER.n_tokens <= 0:
         header_text += "<font color=red>你的消息次数已经全部用完了</font>"
     else:
@@ -181,14 +200,14 @@ def update_header():
     """, unsafe_allow_html=True)
 
 
-def update_sidebar():
+def update_sidebar() -> None:
     with st.container():
         st.header("用户信息")
         st.subheader(st.session_state.USER.nickname)
         st.caption(f"<small>({st.session_state.USER.user_id})</small>", unsafe_allow_html=True)
-        col1, col2 = st.columns(2)
+        col1, col2 = st.columns([1, 2])
         with col1:
-            st.markdown(f"<img class='chat-icon' src='{st.session_state.USER.avatar_url}' width=128 height=128 alt='avatar'>", unsafe_allow_html=True)
+            st.markdown(f"<img class='chat-icon' src='{st.session_state.USER.avatar_url}' width=64 height=64 alt='avatar'>", unsafe_allow_html=True)
         with col2:
             st.metric("**剩余聊天币**", f"{st.session_state.USER.n_tokens}枚")
             add_credit = st.button("充值", key=f"add_credit_{len(st.session_state.LOG)}")
@@ -240,7 +259,10 @@ def update_sidebar():
                             st.write(f"**{set_name}** button pressed")
 
 
-def render_login_popup(popup_container, table_op):
+def render_login_popup(
+    popup_container,
+    table_op
+) -> None:
     with popup_container:
         st.write("")
         # Step 1: Display QR code
@@ -352,12 +374,14 @@ def render_login_popup(popup_container, table_op):
                     )
 
                     # Delete the temp entry from the table
+                    table_name = "tempUserIds"
+                    if DEBUG:
+                        table_name = table_name + "Test"
                     table_res = table_op.delete_entity(entity, table_name)
 
                     # Pull out the sidebar now that the user has logged in
-                    with st.sidebar:
-                        with sidebar_placeholder:
-                            st.subheader("登录中...")
+                    with sidebar.container():
+                        st.subheader("登录中...")
                     components.html(expand_sidebar_script, height=0, width=0)
 
                     # Create/update full user data
@@ -371,6 +395,8 @@ def render_login_popup(popup_container, table_op):
                             login_popup.close()
                             st.error(f"无法初始化用户信息: {action_res['message']}")
                             st.stop()
+                        if "NEW_USER" not in st.session_state:
+                            st.session_state.NEW_USER = True
                     else:
                         # Normal login, we update ip history from user_data
                         action_res = st.session_state.USER.update_ip_history(user_data)
@@ -488,6 +514,17 @@ with st.spinner("应用首次初始化中..."):
     azure_table_op = get_table_op()
     tokenizer = get_tokenizer()
 
+# Warm-up the API server when the user accesses the site
+# (Azure tends to spin them down after some inactivity)
+if "WARM_UP" not in st.session_state or not st.session_state.WARM_UP:
+    with st.spinner("小潘AI正在预热中..."):
+        warm_up_res = warm_up_api_server()
+
+    if warm_up_res['status'] != 0:
+        st.error(f"小潘AI启动失败！{warm_up_res['msg']}")
+        st.stop()
+    st.session_state.WARM_UP = True
+
 ### MAIN STREAMLIT UI STARTS HERE ###
 
 # Define main layout
@@ -500,8 +537,9 @@ st.write("")
 prompt_box = st.empty()
 footer = st.container()
 
-# Define a placeholder container for the sidebar
-sidebar_placeholder = st.sidebar.empty()
+# Initialize sidebar placeholder
+with st.sidebar:
+    sidebar = st.empty()
 
 # Initialize login popup
 login_popup = Modal(title=None, key="login_popup", padding=40, max_width=204)
@@ -527,22 +565,22 @@ if "MEMORY" not in st.session_state:
     st.session_state.MEMORY = [init_prompt]
     st.session_state.LOG = [init_prompt]
 
-
-# Render header in two ways, depending on whether user is logged in or not
-with header:
-    if "USER" not in st.session_state:
-        header_container = st.container()
-        with header_container:
-            col1, col2 = st.columns([1, 9])
-            with col1:
-                if st.button("登录", key=f"login_button_{len(st.session_state.LOG)}"):
-                    login_popup.open()
-            with col2:
-                st.markdown(f"<small>免登录试用版，最多</small>`{DEMO_HISTORY_LIMIT}`<small>条消息的对话，登录后可获取更多聊天资格哦!</small>", unsafe_allow_html=True)
-    else:
-        header_container = st.container()
-        with header_container:
-            update_header()
+# Render header and sidebar depending on whether the user is logged in or not
+if "USER" not in st.session_state:
+    with sidebar.container():
+        st.caption("登录后可以查看用户信息")
+    with header.container():
+        col1, col2 = st.columns([1, 9])
+        with col1:
+            if st.button("登录", key=f"login_button_{len(st.session_state.LOG)}"):
+                login_popup.open()
+        with col2:
+            st.markdown(f"<small>免登录试用版，最多</small>`{DEMO_HISTORY_LIMIT}`<small>条消息的对话，登录后可获取更多聊天资格哦!</small>", unsafe_allow_html=True)
+else:
+    with sidebar.container():
+        update_sidebar()
+    with header.container():
+        update_header()
 
 # Render footer
 with footer:
@@ -552,20 +590,13 @@ with footer:
 # Render the login popup with all the login logic included
 if login_popup.is_open():
     with login_popup.container() as popup_container:
-        render_login_popup(popup_container, azure_table_op)
+        new_registration = render_login_popup(popup_container, azure_table_op)
     login_popup.close()
 
-# Populate the sidebar with user info if the user is logged in
-if "USER" in st.session_state:
-    with st.sidebar:
-        with sidebar_placeholder:
-            update_sidebar()
-else:
-    with st.sidebar:
-        with sidebar_placeholder:
-            st.caption("登录后可以查看用户信息")
+if "NEW_USER" in st.session_state and st.session_state.NEW_USER:
+    st.balloons()
+    st.session_state.NEW_USER = False
 
-# Render the chat log (without the initial prompt, of course)
 with chat_box:
     for i, line in enumerate(st.session_state.LOG[1:]):
         # For AI response
@@ -654,19 +685,18 @@ if len(human_prompt) > 0:
                 st.error(f"无法消费消息次数: {action_res['message']}")
                 st.stop()
 
-            with header:
-                header_container = st.container()
-                with header_container:
-                    update_header()
-
-            with st.sidebar:
-                with sidebar_placeholder:
-                    update_sidebar()
+            # Update the sidebar and header token number
+            with sidebar.container():
+                update_sidebar()
+            with header.container():
+                update_header()
 
             # If the user has logged in and has no tokens left, will prompt him to recharge
             if st.session_state.USER.n_tokens <= 0:
-                prompt_box.empty()
-                st.warning("你的消息次数已用完，请充值")
+                with prompt_box:
+                    st.warning("你的聊天币已用完，请在用户中心充值")
+                components.html(expand_sidebar_script, height=0, width=0)
+                time.sleep(1)
                 st.stop()
 
         elif len(st.session_state.LOG) > DEMO_HISTORY_LIMIT:
