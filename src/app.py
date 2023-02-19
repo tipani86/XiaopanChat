@@ -87,7 +87,14 @@ expand_sidebar_script = """
 <script>
     // Expand the sidebar
     const streamlitDoc = window.parent.document
-    streamlitDoc.getElementsByClassName('css-9s5bis edgvbvh3')[1].click();
+    const buttons = streamlitDoc.getElementsByClassName('css-9s5bis edgvbvh3')
+    // Normally there are three buttons (so we press the index 1),
+    // but on Streamlit hosted service there are five buttons, so we press index 3)
+    if (buttons.length === 3) {
+        buttons[1].click()
+    } else if (buttons.length === 5) {
+        buttons[3].click()
+    }
 </script>
 """
 
@@ -509,9 +516,9 @@ st.subheader("")
 chat_box = st.container()
 st.write("")
 prompt_box = st.empty()
-if st.button("Expand sidebar"):
-    components.html(expand_sidebar_script, height=0, width=0)
 footer = st.container()
+if st.button("DEBUG: Expand sidebar"):
+    components.html(expand_sidebar_script, height=0, width=0)
 
 # Define a placeholder container for the sidebar
 sidebar_placeholder = st.sidebar.empty()
@@ -557,7 +564,7 @@ if "USER" in st.session_state:
 else:
     with st.sidebar:
         with sidebar_placeholder:
-            st.subheader("登录后可以查看用户信息")
+            st.caption("登录后可以查看用户信息")
 
 # Render the chat log (without the initial prompt, of course)
 with chat_box:

@@ -15,4 +15,4 @@ date > build_date.txt
 python3 -m pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
 EOF
 
-CMD streamlit run src/app.py
+CMD streamlit run src/app.py --theme.base light
