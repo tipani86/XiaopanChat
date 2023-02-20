@@ -2,9 +2,32 @@ import os
 import time
 import json
 import zlib
+import hashlib
 import traceback
 from azure.data.tables import TableClient, UpdateMode
 from azure.core.exceptions import ResourceExistsError, HttpResponseError, ResourceNotFoundError
+
+
+def get_md5_hash_7pay(
+    data: dict,
+    pid: str,
+    pkey: str,
+) -> str:
+    # Get md5 hash of input data based on 7-pay documentation
+    # (Ref: http://7-pay.cn/doc.php#d6)
+
+    # Step 1: Insert pid as one key-value pair into data
+    data['pid'] = pid
+    # Step 2: Build a string with all key-value pairs in data sorted alphabetically by key
+    data_str = ""
+    for key in sorted(data.keys()):
+        data_str += f"{key}={data[key]}&"
+    # Step 3: Append pkey to the end of the string but with a key 'key'
+    data_str += f"key={pkey}"
+    # Step 4: Strip the string of all empty spaces
+    data_str = data_str.replace(" ", "")
+    # Step 5: Return the lowercase version of the calculated md5 hash of the string
+    return hashlib.md5(data_str.encode('utf-8')).hexdigest().lower()
 
 
 class AzureTableOp:

@@ -17,6 +17,7 @@ from streamlit_modal import Modal
 import streamlit.components.v1 as components
 from utils import AzureTableOp, User
 from transformers import AutoTokenizer
+import azure.cognitiveservices.speech as speechsdk
 
 DEBUG = True
 
@@ -24,14 +25,20 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Check environment variables
 
-for key in ["OPENAI_API_KEY", "OPENAI_ORG_ID", "WX_LOGIN_SECRET", "AZURE_STORAGE_CONNECTION_STRING"]:
+for key in [
+    "OPENAI_API_KEY", "OPENAI_ORG_ID",  # For OpenAI APIs
+    "AZURE_STORAGE_CONNECTION_STRING",  # For Table Storage
+    "AZURE_SPEECH_KEY",                 # For Azure Speech APIs
+    "WX_LOGIN_SECRET",                  # WeChat Login
+    "7PAY_PID", "7PAY_KEY"              # Payment Gateway
+]:
     if key not in os.environ:
         st.error(f"Please set the {key} environment variable.")
         st.stop()
 
 # Set global variables
 
-_t = humanize.i18n.activate("zh_CN")    # Initialize humanize in Simplified Chinese
+_t = humanize.i18n.activate("zh_CN")    # Initialize humanize time output in Simplified Chinese
 
 DEMO_HISTORY_LIMIT = 10
 NEW_USER_FREE_TOKENS = 20
@@ -45,7 +52,7 @@ N_RETRIES = 3
 COOLDOWN = 2
 BACKOFF = 1.5
 
-# Below are settings for NLP models, not to be confused with user tokens
+# Below are settings for OpenAI NLP models, not to be confused with user chat tokens above
 NLP_MODEL_NAME = "text-davinci-003"
 NLP_MODEL_MAX_TOKENS = 4000
 NLP_MODEL_REPLY_MAX_TOKENS = 1500
@@ -53,6 +60,7 @@ NLP_MODEL_TEMPERATURE = 0.7
 NLP_MODEL_FREQUENCY_PENALTY = 1.0
 NLP_MODEL_PRESENCE_PENALTY = 1.0
 NLP_MODEL_STOP_WORDS = ["Human:", "AI:"]
+
 
 build_date = "unknown"
 if os.path.isfile("build_date.txt"):
@@ -105,6 +113,16 @@ expand_sidebar_script = """
 
 
 @st.cache_resource(show_spinner=False)
+def get_synthesizer(config: dict):
+    speech_config = speechsdk.SpeechConfig(
+        subscription=os.getenv('AZURE_SPEECH_KEY'),
+        region=config['region']
+    )
+    speech_config.set_speech_synthesis_output_format(speechsdk.SpeechSynthesisOutputFormat.Audio24Khz96KBitRateMonoMp3)
+    return speechsdk.SpeechSynthesizer(speech_config, audio_config=None)
+
+
+@st.cache_resource(show_spinner=False)
 def get_table_op():
     return AzureTableOp()
 
@@ -128,9 +146,11 @@ def get_tokenizer():
 
 # @st.cache_data(show_spinner=False)
 def get_json(file_path: str) -> dict:
+    if not os.path.isfile(file_path):
+        st.error(f"File {file_path} not found.")
+        st.stop()
     # Load a json file and return its content
-    with open(file_path, "r") as f:
-        return json.load(f)
+    return json.load(open(file_path, "r"))
 
 
 # @st.cache_data(show_spinner=False)
@@ -313,7 +333,7 @@ def render_login_popup(
                     # (Re-)initiate an entry for this ID in the temp table
                     table_name = "tempUserIds"
                     if DEBUG:
-                        table_name = table_name + "Test"
+                        table_name += "Test"
                     temp_user_id = wx_login_res['data']['tempUserId']
                     entity = {
                         'PartitionKey': "wx_user",
@@ -372,7 +392,7 @@ def render_login_popup(
                     user_data['timestamp'] = timestamp
                     table_name = "users"
                     if DEBUG:
-                        table_name = table_name + "Test"
+                        table_name += "Test"
 
                     # Build user object from temporary login data. The object is easier to manipulate later on.
                     st.session_state.USER = User(
@@ -385,7 +405,7 @@ def render_login_popup(
                     # Delete the temp entry from the table
                     table_name = "tempUserIds"
                     if DEBUG:
-                        table_name = table_name + "Test"
+                        table_name += "Test"
                     table_res = table_op.delete_entity(entity, table_name)
 
                     # Pull out the sidebar now that the user has logged in
@@ -482,12 +502,69 @@ def generate_prompt_from_memory():
     return memory_str
 
 
+def synthesize_text(
+    text: str,
+    config: dict,
+    synthesizer,
+) -> bytes:
+
+    ssml_string = f"""
+        <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-US">
+            <voice name="{config['voice'] if 'voice' in config else 'zh-CN-XiaoxiaoNeural'}">
+                <prosody rate="{config['rate'] if 'rate' in config else 1.0}" pitch="{config['pitch'] if 'pitch' in config else '0%'}">
+                    {text}
+                </prosody>
+            </voice>
+        </speak>
+    """
+    audio_bytes = synthesizer.speak_ssml_async(ssml_string).get().audio_data
+    b64 = base64.b64encode(audio_bytes).decode()
+    md = f"""
+        <audio autoplay="true">
+        <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
+        </audio>
+    """
+    st.markdown(
+        md,
+        unsafe_allow_html=True,
+    )
+
+
+def consume_tokens(n_tokens: int = 1) -> dict:
+    # Add negative tokens to tokenUsage table under the user ID (or if not logged in, just under "unknown")
+    if "USER" in st.session_state:
+        partition_key = st.session_state.USER.channel
+        row_key = st.session_state.USER.user_id
+    else:
+        partition_key = "unknown"
+        row_key = "unknown"
+    # Take timestamp
+    d = datetime.datetime.now()
+    timestamp = calendar.timegm(d.timetuple())
+    entity = {
+        'PartitionKey': partition_key,
+        'RowKey': row_key,
+        'data': {
+            'timestamp': timestamp,
+            'tokens': -n_tokens,
+        }
+    }
+    table_name = "tokenUsage"
+    if DEBUG:
+        table_name += "Test"
+    return azure_table_op.update_entities(entity, table_name)
+
+
+# Load Azure Speech configuration and validate its data
+speech_cfg_path = os.path.join(ROOT_DIR, "cfg", "azure_speech.json")
+speech_cfg = get_json(speech_cfg_path)
+for key in ["voice", "rate", "pitch"]:
+    if key not in speech_cfg:
+        st.error(f"Key {key} not found in Azure Speech configuration file.")
+        st.stop()
+
 # Load WeChat login configuration and validate its data
 wx_login_cfg_path = os.path.join(ROOT_DIR, "cfg", "wx_login.json")
-if not os.path.isfile(wx_login_cfg_path):
-    st.error("WeChat login configuration file not found.")
-    st.stop()
-
 wx_login_cfg = get_json(wx_login_cfg_path)
 if 'endpoint' not in wx_login_cfg:
     st.error("WeChat login endpoint not found in configuration file.")
@@ -495,10 +572,6 @@ if 'endpoint' not in wx_login_cfg:
 
 # Load product catalogue configuration and validate its data
 catalogue_path = os.path.join(ROOT_DIR, "cfg", "catalogue.json")
-if not os.path.isfile(catalogue_path):
-    st.error("Product Catalogue configuration file not found.")
-    st.stop()
-
 catalogue = get_json(catalogue_path)
 for set_name in catalogue:
     for key in ["price", "product", "amount"]:
@@ -520,8 +593,10 @@ st.set_page_config(
 
 # Initialize some useful class instances
 with st.spinner("应用首次初始化中..."):
-    azure_table_op = get_table_op()
     tokenizer = get_tokenizer()
+
+azure_table_op = get_table_op()
+azure_synthesizer = get_synthesizer(speech_cfg)
 
 # Warm-up the API server when the user accesses the site
 # (Azure tends to spin them down after some inactivity)
@@ -658,7 +733,6 @@ if len(human_prompt) > 0:
         writing_animation = st.empty()
         file_path = os.path.join(ROOT_DIR, "src", "loading.gif")
         writing_animation.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;<img src='data:image/gif;base64,{get_local_img(file_path)}' width=30 height=10>", unsafe_allow_html=True)
-
         # Call the OpenAI API to generate a response with retry, cooldown and backoff
         for i in range(N_RETRIES):
             try:
@@ -687,6 +761,11 @@ if len(human_prompt) > 0:
                     st.stop()
                 else:
                     time.sleep(COOLDOWN * BACKOFF ** i)
+
+        with reply_box.container():
+            st.markdown(get_chat_message(reply_text), unsafe_allow_html=True)
+            # Synthesize the response and play it as audio
+            synthesize_text(reply_text, speech_cfg, azure_synthesizer)
 
         # Clear the writing animation
         writing_animation.empty()
