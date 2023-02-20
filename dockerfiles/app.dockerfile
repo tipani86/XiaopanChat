@@ -11,8 +11,9 @@ WORKDIR /app
 
 RUN <<EOF
 set -e
-sudo apt-get update
-sudo apt-get install -y --no-install-recommends build-essential libssl-dev libasound2 wget
+apt-get update
+apt-get install -y --no-install-recommends build-essential libssl-dev libasound2 wget
+apt-get clean
 date > build_date.txt
 python3 -m pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
 EOF
