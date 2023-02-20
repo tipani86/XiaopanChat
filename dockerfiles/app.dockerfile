@@ -11,6 +11,7 @@ WORKDIR /app
 
 RUN <<EOF
 set -e
+sed -i 's/deb.debian.org/mirrors.ustc.edu.cn/g' /etc/apt/sources.list
 apt-get update
 apt-get install -y --no-install-recommends build-essential libssl-dev libasound2 wget
 apt-get clean
