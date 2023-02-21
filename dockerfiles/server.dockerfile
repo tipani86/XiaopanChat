@@ -1,7 +1,5 @@
 # syntax=docker/dockerfile:1.3-labs
 
-# Build a docker image for serving the CVML Debugger Streamlit app
-
 FROM python:3.7-slim
 
 ARG DEBIAN_FRONTEND="noninteractive"

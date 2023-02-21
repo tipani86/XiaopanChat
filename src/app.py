@@ -128,7 +128,7 @@ def get_synthesizer(config: dict):
         subscription=os.getenv('AZURE_SPEECH_KEY'),
         region=config['region']
     )
-    speech_config.set_speech_synthesis_output_format(speechsdk.SpeechSynthesisOutputFormat.Audio16Khz64KBitRateMonoMp3)
+    speech_config.set_speech_synthesis_output_format(speechsdk.SpeechSynthesisOutputFormat.Audio16Khz32KBitRateMonoMp3)
     return speechsdk.SpeechSynthesizer(speech_config, audio_config=None)
 
 
