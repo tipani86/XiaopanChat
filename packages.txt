@@ -1,0 +1,4 @@
+build-essential
+libssl-dev
+libasound2
+wget

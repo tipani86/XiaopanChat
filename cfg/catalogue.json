@@ -1,0 +1,30 @@
+{
+    "小白套餐": {
+        "price": 5.00,
+        "sale_price": 4.88,
+        "product": "聊天币",
+        "unit": "枚",
+        "amount": 10
+    },
+    "进阶套餐": {
+        "price": 15,
+        "sale_price": 12.88,
+        "product": "聊天币",
+        "unit": "枚",
+        "amount": 30
+    },
+    "王者套餐": {
+        "price": 40,
+        "sale_price": 34.88,
+        "product": "聊天币",
+        "unit": "枚",
+        "amount": 80
+    },
+    "钻石套餐": {
+        "price": 100,
+        "sale_price": 88.88,
+        "product": "聊天币",
+        "unit": "枚",
+        "amount": 200
+    }
+}
