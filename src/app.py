@@ -1,9 +1,12 @@
 import os
+import re
+import math
 import time
 import json
 import base64
 import openai
 import qrcode
+import random
 import requests
 import datetime
 import calendar
@@ -23,6 +26,8 @@ DEBUG = True
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 # Check environment variables
 
 for key in [
@@ -30,7 +35,7 @@ for key in [
     "AZURE_STORAGE_CONNECTION_STRING",  # For Table Storage
     "AZURE_SPEECH_KEY",                 # For Azure Speech APIs
     "WX_LOGIN_SECRET",                  # WeChat Login
-    "7PAY_PID", "7PAY_KEY"              # Payment Gateway
+    "SEVENPAY_PID", "SEVENPAY_PKEY"     # Payment Gateway
 ]:
     if key not in os.environ:
         st.error(f"Please set the {key} environment variable.")
@@ -60,6 +65,11 @@ NLP_MODEL_TEMPERATURE = 0.7
 NLP_MODEL_FREQUENCY_PENALTY = 1.0
 NLP_MODEL_PRESENCE_PENALTY = 1.0
 NLP_MODEL_STOP_WORDS = ["Human:", "AI:"]
+
+OUTPUT_OPTIONS = {
+    "text": "文本",
+    "text_audio": "文本+语音",
+}
 
 
 build_date = "unknown"
@@ -118,7 +128,7 @@ def get_synthesizer(config: dict):
         subscription=os.getenv('AZURE_SPEECH_KEY'),
         region=config['region']
     )
-    speech_config.set_speech_synthesis_output_format(speechsdk.SpeechSynthesisOutputFormat.Audio24Khz96KBitRateMonoMp3)
+    speech_config.set_speech_synthesis_output_format(speechsdk.SpeechSynthesisOutputFormat.Audio16Khz64KBitRateMonoMp3)
     return speechsdk.SpeechSynthesizer(speech_config, audio_config=None)
 
 
@@ -167,16 +177,23 @@ def get_css() -> str:
         return f"<style>{f.read()}</style>"
 
 
+def generate_event_id() -> str:
+    # Generate event ID which is current timestamp + a 6-digit random number
+    d = datetime.datetime.now()
+    timestamp = calendar.timegm(d.timetuple())
+    return str(timestamp) + str(random.randint(100000, 999999)), timestamp
+
+
 def warm_up_api_server():
     res = {'status': 0, 'msg': "Success"}
     # Warm up Xiaopan API server with retry, backoff etc.
     try:
-        for i in range(N_RETRIES):
+        for i in range(N_RETRIES * 5):
             r = requests.get("https://xiaopan-chat-api.azurewebsites.net/", timeout=TIMEOUT)
             if r.status_code == 200:
                 break
             else:
-                time.sleep(BACKOFF ** i)
+                time.sleep(COOLDOWN * BACKOFF ** i)
     except Exception as e:
         res['status'] = 2
         res['msg'] = f"Failed to warm up API server!"
@@ -352,7 +369,8 @@ def render_login_popup(
                     qr_img = qr_img.resize((200, 200))
                     qr_img = np.asarray(qr_img) * 255   # The values are 0/1, we need to make it visible
 
-                st.image(qr_img, caption="请使用微信扫描二维码登录", output_format="PNG")
+                st.image(qr_img, caption="请用手机微信扫二维码登录", output_format="PNG")
+                st.caption(":red[手机用户请长按复制二维码，粘贴到任意微信聊天框后再长按进行扫码登录]")
 
                 # Poll the login status every 3 seconds and close the popup when login is successful, or timeout after 60 seconds.
                 for i in range(20):
@@ -439,6 +457,7 @@ def generate_prompt_from_memory():
     # Check whether tokenized model memory so far + max reply length exceeds the max possible tokens
     memory_str = "\n".join(st.session_state.MEMORY)
     memory_tokens = tokenizer.tokenize(memory_str)
+    tokens_used = 0  # NLP tokens (for OpenAI)
     if len(memory_tokens) + NLP_MODEL_REPLY_MAX_TOKENS > NLP_MODEL_MAX_TOKENS:
         # Strategy: We keep the first item of memory (original prompt), and last three items
         # (last AI message, human's reply, and the 'AI:' prompt) intact, and summarize the middle part
@@ -450,7 +469,7 @@ def generate_prompt_from_memory():
         ]
         summarizable_str = "\n".join(summarizable_memory)
         summarizable_tokens = tokenizer.tokenize(summarizable_str)
-
+        tokens_used += len(summarizable_tokens)
         # Check whether the summarizable tokens + 75% of the reply length exceeds the max possible tokens.
         # If so, adjust down to 50% of the reply length and try again, lastly if even 25% of the reply tokens still exceed, call an error.
         for ratio in [0.75, 0.5, 0.25]:
@@ -475,6 +494,7 @@ def generate_prompt_from_memory():
                         else:
                             time.sleep(COOLDOWN * BACKOFF ** i)
                 summary_text = response["choices"][0]["text"].strip()
+                tokens_used += len(tokenizer.tokenize(summary_text))
 
                 # Re-build memory so it consists of the original prompt, a note that a summary follows,
                 # the actual summary, a second note that the last two conversation items follow,
@@ -489,67 +509,96 @@ def generate_prompt_from_memory():
 
                 # Re-generate prompt from new memory
                 new_prompt = "\n".join(st.session_state.MEMORY)
+                tokens_used += len(tokenizer.tokenize(new_prompt))
 
                 if DEBUG:
                     st.info(f"Summarization triggered. New prompt:\n\n{new_prompt}")
 
-                return new_prompt
+                return new_prompt, tokens_used
 
         st.error("小潘AI出错了: 你的消息太长了，小潘AI无法处理")
         st.stop()
 
     # No need to summarize, just return the original prompt
-    return memory_str
+    tokens_used += len(memory_tokens)
+    return memory_str, tokens_used
 
 
 def synthesize_text(
     text: str,
     config: dict,
     synthesizer,
-) -> bytes:
-
-    ssml_string = f"""
-        <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-US">
-            <voice name="{config['voice'] if 'voice' in config else 'zh-CN-XiaoxiaoNeural'}">
-                <prosody rate="{config['rate'] if 'rate' in config else 1.0}" pitch="{config['pitch'] if 'pitch' in config else '0%'}">
-                    {text}
-                </prosody>
-            </voice>
-        </speak>
-    """
-    audio_bytes = synthesizer.speak_ssml_async(ssml_string).get().audio_data
-    b64 = base64.b64encode(audio_bytes).decode()
-    md = f"""
+) -> None:
+    # Clean up the text so it doesn't contain weird tokens
+    CLEANR = re.compile('<.*?>|&([a-z0-9]+|#[0-9]{1,6}|#x[0-9a-f]{1,6});')
+    text = re.sub(CLEANR, '', text)
+    # Add speaking style if configured
+    if 'style' in config and config['style'] is not None:
+        ssml_string = f"""
+            <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="en-US">
+                <voice name="{config['voice'] if 'voice' in config else 'zh-CN-XiaoxiaoNeural'}">
+                <mstts:express-as style='{config['style']}'>
+                    <prosody rate="{config['rate'] if 'rate' in config else 1.0}" pitch="{config['pitch'] if 'pitch' in config else '0%'}">
+                        {text}
+                    </prosody>
+                </mstts:express-as>
+                </voice>
+            </speak>
+        """
+    else:
+        ssml_string = f"""
+            <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-US">
+                <voice name="{config['voice'] if 'voice' in config else 'zh-CN-XiaoxiaoNeural'}">
+                    <prosody rate="{config['rate'] if 'rate' in config else 1.0}" pitch="{config['pitch'] if 'pitch' in config else '0%'}">
+                        {text}
+                    </prosody>
+                </voice>
+            </speak>
+        """
+    result = synthesizer.speak_ssml_async(ssml_string).get()
+    if DEBUG:
+        print(result)
+    if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
+        length = result.audio_duration.total_seconds()
+        b64 = base64.b64encode(result.audio_data).decode()
+        md = f"""
         <audio autoplay="true">
-        <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
+            <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
         </audio>
-    """
-    st.markdown(
-        md,
-        unsafe_allow_html=True,
-    )
+        """
+        st.markdown(
+            md,
+            unsafe_allow_html=True,
+        )
+        return length
+    elif result.reason == speechsdk.ResultReason.Canceled:
+        cancellation_details = result.cancellation_details
+        print(f"Speech synthesis canceled: {cancellation_details.reason}")
+        if cancellation_details.reason == speechsdk.CancellationReason.Error:
+            print(f"Error details: {cancellation_details.error_details}")
+    return 0
 
 
-def consume_tokens(n_tokens: int = 1) -> dict:
+def use_consumables(
+    n_tokens: int = 1,
+    n_chars: int = 0,
+) -> dict:
     # Add negative tokens to tokenUsage table under the user ID (or if not logged in, just under "unknown")
     if "USER" in st.session_state:
-        partition_key = st.session_state.USER.channel
-        row_key = st.session_state.USER.user_id
+        partition_key = f"{st.session_state.USER.channel}_{st.session_state.USER.user_id}"
     else:
-        partition_key = "unknown"
-        row_key = "unknown"
-    # Take timestamp
-    d = datetime.datetime.now()
-    timestamp = calendar.timegm(d.timetuple())
+        partition_key = "unknown_user"
+    row_key, timestamp = generate_event_id()
     entity = {
         'PartitionKey': partition_key,
         'RowKey': row_key,
-        'data': {
+        'data': json.dumps({
             'timestamp': timestamp,
             'tokens': -n_tokens,
-        }
+            'chars': -n_chars,
+        })
     }
-    table_name = "tokenUsage"
+    table_name = "tokenuse"
     if DEBUG:
         table_name += "Test"
     return azure_table_op.update_entities(entity, table_name)
@@ -626,7 +675,7 @@ with st.sidebar:
     sidebar = st.empty()
 
 # Initialize login popup
-login_popup = Modal(title=None, key="login_popup", padding=40, max_width=204)
+login_popup = Modal(title=None, key="login_popup", padding=40, max_width=200)
 
 # Load CSS code
 st.markdown(get_css(), unsafe_allow_html=True)
@@ -716,7 +765,7 @@ if len(human_prompt) > 0:
     st.session_state.MEMORY.extend(st.session_state.LOG[-2:])
 
     # Run a special JS code to clear the input box after human_prompt is used
-    components.html(clear_input_script, height=0, width=0)
+    # components.html(clear_input_script, height=0, width=0)
     prompt_box.empty()
 
     with chat_box:
@@ -725,21 +774,19 @@ if len(human_prompt) > 0:
         contents = line.split("Human: ")[1]
         st.markdown(get_chat_message(contents, align="right"), unsafe_allow_html=True)
 
-        # A cool streaming output method by constantly writing to a placeholder element
-        # (Ref: https://medium.com/@avra42/how-to-stream-output-in-chatgpt-style-while-using-openai-completion-method-b90331c15e85)
         reply_box = st.empty()
 
         # This is one of those small three-dot animations to indicate the bot is "writing"
         writing_animation = st.empty()
         file_path = os.path.join(ROOT_DIR, "src", "loading.gif")
         writing_animation.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;<img src='data:image/gif;base64,{get_local_img(file_path)}' width=30 height=10>", unsafe_allow_html=True)
+
         # Call the OpenAI API to generate a response with retry, cooldown and backoff
+        prompt, NLP_tokens_used = generate_prompt_from_memory()
+        reply_box.markdown(get_chat_message(), unsafe_allow_html=True)
         for i in range(N_RETRIES):
             try:
-                reply_box.markdown(get_chat_message(), unsafe_allow_html=True)
-                reply = []
-                prompt = generate_prompt_from_memory()
-                for resp in openai.Completion.create(
+                reply_text = openai.Completion.create(
                     model=NLP_MODEL_NAME,
                     prompt=prompt,
                     temperature=NLP_MODEL_TEMPERATURE,
@@ -747,25 +794,28 @@ if len(human_prompt) > 0:
                     frequency_penalty=NLP_MODEL_FREQUENCY_PENALTY,
                     presence_penalty=NLP_MODEL_PRESENCE_PENALTY,
                     stop=NLP_MODEL_STOP_WORDS,
-                    stream=True
-                ):
-                    reply.append(resp.choices[0].text)
-                    reply_text = "".join(reply).strip()
-                    # Visualize the streaming output in real-time
-                    reply_box.markdown(get_chat_message(reply_text), unsafe_allow_html=True)
+                ).choices[0].text.strip()
                 break
-
             except Exception as e:
                 if i == N_RETRIES - 1:
                     st.error(f"小潘AI出错了: {e}")
                     st.stop()
                 else:
                     time.sleep(COOLDOWN * BACKOFF ** i)
-
-        with reply_box.container():
-            st.markdown(get_chat_message(reply_text), unsafe_allow_html=True)
-            # Synthesize the response and play it as audio
-            synthesize_text(reply_text, speech_cfg, azure_synthesizer)
+        NLP_tokens_used += len(reply_text)
+        # Synthesize the response and play it as audio
+        audio_play_time = synthesize_text(reply_text, speech_cfg, azure_synthesizer)
+        # Loop so that reply_text gets revealed one character at a time
+        chars = len(reply_text)
+        pause_per_char = 0.8 * audio_play_time / chars  # 0.8 because we want the text to appear a bit faster than the audio
+        tic = time.time()
+        for i in range(chars):
+            with reply_box.container():
+                st.markdown(get_chat_message(reply_text[:i+1]), unsafe_allow_html=True)
+                time.sleep(pause_per_char)
+        toc = time.time()
+        # Pause for the remaining time, if any
+        time.sleep(max(0, audio_play_time - (toc - tic)))
 
         # Clear the writing animation
         writing_animation.empty()
@@ -774,8 +824,11 @@ if len(human_prompt) > 0:
         st.session_state.LOG[-1] += reply_text
         st.session_state.MEMORY[-1] += reply_text
 
+        # Use consumables
+        use_consumables(NLP_tokens_used, chars)
+
+        # To deprecate
         if "USER" in st.session_state:
-            # Consume one user token
             action_res = st.session_state.USER.consume_token()
             if action_res['status'] != 0:
                 st.error(f"无法消费聊天币: {action_res['message']}")

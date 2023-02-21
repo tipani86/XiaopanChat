@@ -1,6 +1,7 @@
 {
-    "region": "westeurope",
-    "voice": "zh-CN-XiaochenNeural",
-    "rate": 0.85,
-    "pitch": "+10%"
+    "region": "eastasia",
+    "voice": "zh-TW-HsiaoChenNeural",
+    "style": null,
+    "rate": 1.0,
+    "pitch": "+15%"
 }
