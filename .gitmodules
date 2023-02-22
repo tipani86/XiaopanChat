@@ -1,6 +1,0 @@
-[submodule "src/howler.js"]
-	path = src/howler.js
-	url = https://github.com/goldfire/howler.js.git
-[submodule ".static/howler.js"]
-	path = .static/howler.js
-	url = https://github.com/goldfire/howler.js.git
