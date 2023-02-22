@@ -1,3 +1,4 @@
 flask
+pandas
 azure-core
 azure-data-tables

@@ -8,11 +8,10 @@ import datetime
 import calendar
 import traceback
 import pandas as pd
+from app_config import DEBUG, TIMEOUT
 from concurrent.futures import ThreadPoolExecutor, wait
 from azure.data.tables import TableClient, UpdateMode
 from azure.core.exceptions import ResourceExistsError, HttpResponseError, ResourceNotFoundError
-
-TIMEOUT = 30    # Mainly for Azure Table ops
 
 
 def use_consumables(
@@ -313,25 +312,25 @@ class User:
         # db_res = self.db_op.query_entities(query_filter, select, parameters, self.users_table)
         users_task = self.executor.submit(
             self.db_op.query_entities,
-            args=[query_filter, select, parameters, self.users_table]
+            query_filter, select, parameters, self.users_table
         )
 
         # Submit orders and tokenuse search (they share the same select but slightly different
         # parameters: we only want to see the orders which are "paid" because those are real)
-        select = ["timestamp", "tokens"]
+        select = ["timestamp", "tokens", "comments"]
 
         query_filter = f"PartitionKey eq @key and status eq @status"
         parameters = {'key': f"{self.channel}_{self.user_id}", 'status': "paid"}
         orders_task = self.executor.submit(
             self.db_op.query_entities,
-            args=[query_filter, select, parameters, self.orders_table]
+            query_filter, select, parameters, self.orders_table
         )
 
         query_filter = f"PartitionKey eq @key"
         parameters = {'key': f"{self.channel}_{self.user_id}"}
         tokenuse_task = self.executor.submit(
             self.db_op.query_entities,
-            args=[query_filter, select, parameters, self.tokenuse_table]
+            query_filter, select, parameters, self.tokenuse_table
         )
 
         # Wait on the user search result first because it's needed to determine if we go any further
@@ -376,6 +375,13 @@ class User:
                     return res
                 transactions.extend(task_res.result()['data'])
             self.transactions = pd.DataFrame(transactions)
+            if DEBUG:
+                print(self.transactions)
+            # Sum up all the tokens to arrive at the current balance
+            if len(self.transactions) <= 0:
+                self.n_tokens = 0
+            else:
+                self.n_tokens = self.transactions['tokens'].sum()
 
         return res
 
