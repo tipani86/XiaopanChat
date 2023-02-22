@@ -16,5 +16,15 @@
 })(window, document, 'dataLayer', '84ddea31-5408-4d83-a6fe-ffe81f25b029');
 
 const streamlitDoc = window.parent.document
-const buttons = streamlitDoc.getElementsByClassName('css-9s5bis edgvbvh3')
-console.log(buttons)
+
+streamlitDoc.voicePlayer = document.getElementById('voicePlayer')
+streamlitDoc.addEventListener('click', () => {
+    streamlitDoc.voicePlayer.load()
+    streamlitDoc.removeEventListener('click', () => {})
+})
+streamlitDoc.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') {
+        streamlitDoc.voicePlayer.load()
+        streamlitDoc.removeEventListener('keydown', function(e) {})
+    }
+})

@@ -167,7 +167,10 @@ def get_json(file_path: str) -> dict:
 def get_js() -> str:
     # Read javascript web trackers code from script.js file
     with open(os.path.join(ROOT_DIR, "src", "script.js"), "r") as f:
-        return f"<script type='text/javascript'>{f.read()}</script>"
+        return f"""
+            <audio id="voicePlayer" autoplay #voicePlayer></audio>
+            <script type='text/javascript'>{f.read()}</script>
+        """
 
 
 # @st.cache_data(show_spinner=False)
@@ -187,16 +190,15 @@ def generate_event_id() -> str:
 def warm_up_api_server():
     res = {'status': 0, 'msg': "Success"}
     # Warm up Xiaopan API server with retry, backoff etc.
-    try:
-        for i in range(N_RETRIES * 5):
+    for i in range(N_RETRIES * 2):
+        try:
             r = requests.get("https://xiaopan-chat-api.azurewebsites.net/", timeout=TIMEOUT)
             if r.status_code == 200:
-                break
-            else:
-                time.sleep(COOLDOWN * BACKOFF ** i)
-    except Exception as e:
-        res['status'] = 2
-        res['msg'] = f"Failed to warm up API server!"
+                return res
+        except Exception as e:
+            time.sleep(COOLDOWN * BACKOFF ** i)
+    res['status'] = 2
+    res['msg'] = f"Failed to warm up API server!"
     return res
 
 
@@ -561,15 +563,16 @@ def synthesize_text(
     if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
         length = result.audio_duration.total_seconds()
         b64 = base64.b64encode(result.audio_data).decode()
-        md = f"""
-        <audio autoplay="true">
-            <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
-        </audio>
-        """
-        st.markdown(
-            md,
-            unsafe_allow_html=True,
-        )
+        # md = f"""
+        # <audio autoplay="true">
+        #     <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
+        # </audio>
+        # """
+        # st.markdown(
+        #     md,
+        #     unsafe_allow_html=True,
+        # )
+        components.html(f"""<script>window.parent.document.voicePlayer.src = "data:audio/mp3;base64,{b64}";</script>""", height=0, width=0)
         return length
     elif result.reason == speechsdk.ResultReason.Canceled:
         cancellation_details = result.cancellation_details
@@ -807,7 +810,7 @@ if len(human_prompt) > 0:
         audio_play_time = synthesize_text(reply_text, speech_cfg, azure_synthesizer)
         # Loop so that reply_text gets revealed one character at a time
         chars = len(reply_text)
-        pause_per_char = 0.8 * audio_play_time / chars  # 0.8 because we want the text to appear a bit faster than the audio
+        pause_per_char = 0.7 * audio_play_time / chars  # 0.8 because we want the text to appear a bit faster than the audio
         tic = time.time()
         for i in range(chars):
             with reply_box.container():
@@ -816,6 +819,9 @@ if len(human_prompt) > 0:
         toc = time.time()
         # Pause for the remaining time, if any
         time.sleep(max(0, audio_play_time - (toc - tic)))
+
+        # Clear the audio stream from voicePlayer
+        components.html(f"""<script>window.parent.document.voicePlayer.src = "";</script>""", height=0, width=0)
 
         # Clear the writing animation
         writing_animation.empty()
