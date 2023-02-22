@@ -3,16 +3,8 @@ import json
 import traceback
 from flask import Flask, request, jsonify
 from utils import AzureTableOp, get_md5_hash_7pay
+from app_config import DEBUG, ORDER_VALIDATION_KEYS
 
-DEBUG = True
-
-order_validation_keys = [
-    ('body', 'title'),
-    ('fee', 'money'),
-    ('no', 'no'),
-    ('pay_type', 'paytype'),
-    ('remark', 'remark'),
-]
 
 errors = []
 for key in [
@@ -69,7 +61,7 @@ def handle_wx_login():
             # Step 1: First check if the temp_user_id exists in the tempUserIds table
             table_name = "tempUserIds"
             if DEBUG:
-                table_name = table_name + "Test"
+                table_name += "Test"
 
             query_filter = f"PartitionKey eq @channel and RowKey eq @temp_user_id"
             select = None
@@ -130,7 +122,7 @@ def handle_sevenpay_validation():
             # Step 2: Find the order and confirm that the data is correct
             table_name = "orders"
             if DEBUG:
-                table_name = table_name + "Test"
+                table_name += "Test"
 
             query_filter = f"RowKey eq @order_id"
             select = None
@@ -145,7 +137,7 @@ def handle_sevenpay_validation():
                 return "Invalid order_id"
             entity = json.loads(table_res['data'][0])    # There should only be one order for the order_id
             order_data = entity['data']
-            for our_key, sevenpay_key in order_validation_keys:
+            for our_key, sevenpay_key in ORDER_VALIDATION_KEYS:
                 if order_data[our_key] != form_data[sevenpay_key]:
                     return f"Mismatched key values: {our_key} ({order_data[our_key]}) != {sevenpay_key} ({form_data[sevenpay_key]})"
 
