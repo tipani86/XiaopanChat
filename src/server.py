@@ -141,10 +141,12 @@ def handle_sevenpay_validation():
                 if order_data[our_key] != form_data[sevenpay_key]:
                     return f"Mismatched key values: {our_key} ({order_data[our_key]}) != {sevenpay_key} ({form_data[sevenpay_key]})"
 
-            # Step 3: Update the order status to paid
-            entity['status'] = "paid"
+            # Step 3: Return early success if status is already paid
+            if entity['status'] == "paid":
+                return "success"
 
-            # Step 4: Update the order in the table
+            # Step 4: Update the order status to paid and update table data
+            entity['status'] = "paid"
             table_res = azure_table_op.update_entities(entity, table_name)
             if table_res['status'] != 0:
                 return f"Failed to update order: {table_res['message']}"

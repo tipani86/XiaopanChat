@@ -1,7 +1,7 @@
 {
     "region": "eastasia",
-    "voice": "zh-TW-HsiaoChenNeural",
-    "style": null,
-    "rate": 1.0,
-    "pitch": "+15%"
+    "voice": "zh-CN-XiaoshuangNeural",
+    "style": "Chat",
+    "rate": 0.9,
+    "pitch": "-10%"
 }
