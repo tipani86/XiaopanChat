@@ -17,6 +17,8 @@
 
 const streamlitDoc = window.parent.document
 
+// Audio autoplay block override on mobile browsers (general idea from https://stackoverflow.com/questions/13266474/autoplay-audio-on-mobile-safari)
+
 streamlitDoc.voicePlayer = document.getElementById('voicePlayer')
 streamlitDoc.addEventListener('click', () => {
     streamlitDoc.voicePlayer.load()

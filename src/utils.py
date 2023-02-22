@@ -2,31 +2,63 @@ import os
 import time
 import json
 import zlib
+import random
 import hashlib
+import datetime
+import calendar
 import traceback
+import pandas as pd
+from concurrent.futures import ThreadPoolExecutor, wait
 from azure.data.tables import TableClient, UpdateMode
 from azure.core.exceptions import ResourceExistsError, HttpResponseError, ResourceNotFoundError
+
+TIMEOUT = 30    # Mainly for Azure Table ops
+
+
+def use_consumables(
+    db_op,
+    table_name: str,
+    partition_key: str = "unknown_user",
+    n_tokens: int = 1,
+    n_chars: int = 0,
+    comments: str = ""
+) -> dict:
+    # Add negative tokens and synthesized characters info to tokenuse table under the user ID (or if not logged in, just under "unknown_user")
+    row_key, timestamp = generate_event_id()
+    entity = {
+        'PartitionKey': partition_key,
+        'RowKey': row_key,
+        'timestamp': timestamp,
+        'tokens': -n_tokens,
+        'chars': -n_chars,
+        'comments': comments
+    }
+    return db_op.update_entities(entity, table_name)
+
+
+def generate_event_id() -> tuple:
+    # Generate event ID which is current timestamp + a 6-digit random number
+    d = datetime.datetime.now()
+    timestamp = calendar.timegm(d.timetuple())
+    return str(timestamp) + str(random.randint(100000, 999999)), timestamp
 
 
 def get_md5_hash_7pay(
     data: dict,
-    pid: str,
     pkey: str,
 ) -> str:
     # Get md5 hash of input data based on 7-pay documentation
     # (Ref: http://7-pay.cn/doc.php#d6)
 
-    # Step 1: Insert pid as one key-value pair into data
-    data['pid'] = pid
-    # Step 2: Build a string with all key-value pairs in data sorted alphabetically by key
+    # Step 1: Build a string with all key-value pairs in data sorted alphabetically by key
     data_str = ""
     for key in sorted(data.keys()):
         data_str += f"{key}={data[key]}&"
-    # Step 3: Append pkey to the end of the string but with a key 'key'
+    # Step 2: Append pkey to the end of the string but with a key 'key'
     data_str += f"key={pkey}"
-    # Step 4: Strip the string of all empty spaces
+    # Step 3: Strip the string of all empty spaces
     data_str = data_str.replace(" ", "")
-    # Step 5: Return the lowercase version of the calculated md5 hash of the string
+    # Step 4: Return the lowercase version of the calculated md5 hash of the string
     return hashlib.md5(data_str.encode('utf-8')).hexdigest().lower()
 
 
@@ -255,22 +287,63 @@ class User:
         channel: str,
         user_id: str,
         db_op,
-        table_name: str = "users"
+        users_table: str = "users",
+        orders_table: str = "orders",
+        tokenuse_table: str = "tokenuse"
     ) -> None:
 
         # Initialize the basic info
         self.channel = channel
         self.user_id = user_id
         self.db_op = db_op
-        self.table_name = table_name
+        self.users_table = users_table
+        self.orders_table = orders_table
+        self.tokenuse_table = tokenuse_table
+        self.transactions = None
+        self.executor = ThreadPoolExecutor(3)
 
     def sync_from_db(self) -> dict:
         res = {'status': 0, 'message': "Success"}
-        # Fetch the remaining info from database
+        # Fetch the remaining user, orders and tokenuse table data with parallelism
+
+        # Submit user search
         query_filter = f"PartitionKey eq @channel and RowKey eq @user_id"
         select = None
         parameters = {'channel': self.channel, 'user_id': self.user_id}
-        db_res = self.db_op.query_entities(query_filter, select, parameters, self.table_name)
+        # db_res = self.db_op.query_entities(query_filter, select, parameters, self.users_table)
+        users_task = self.executor.submit(
+            self.db_op.query_entities,
+            args=[query_filter, select, parameters, self.users_table]
+        )
+
+        # Submit orders and tokenuse search (they share the same select but slightly different
+        # parameters: we only want to see the orders which are "paid" because those are real)
+        select = ["timestamp", "tokens"]
+
+        query_filter = f"PartitionKey eq @key and status eq @status"
+        parameters = {'key': f"{self.channel}_{self.user_id}", 'status': "paid"}
+        orders_task = self.executor.submit(
+            self.db_op.query_entities,
+            args=[query_filter, select, parameters, self.orders_table]
+        )
+
+        query_filter = f"PartitionKey eq @key"
+        parameters = {'key': f"{self.channel}_{self.user_id}"}
+        tokenuse_task = self.executor.submit(
+            self.db_op.query_entities,
+            args=[query_filter, select, parameters, self.tokenuse_table]
+        )
+
+        # Wait on the user search result first because it's needed to determine if we go any further
+        users_task_res = wait([users_task], timeout=TIMEOUT)
+        if len(users_task_res.not_done) > 0:
+            res['status'] = 1
+            res['message'] = f"Users data fetching timed out after {TIMEOUT} seconds."
+            return res
+
+        for task_res in users_task_res.done:
+            db_res = task_res.result()
+            break   # There should only be one result anyway
         if db_res['status'] != 0:
             return db_res
         if len(db_res['data']) <= 0:
@@ -284,56 +357,104 @@ class User:
         else:
             # Load rest of the info
             entity = db_res['data'][0]
-            self.n_tokens = entity['n_tokens']
             self.nickname = entity['nickname']
             self.avatar_url = entity['avatar_url']
             self.ip_history = json.loads(entity['ip_history'])
+
+            # Count the available tokens from orders and usage data
+            tokens_task_res = wait([orders_task, tokenuse_task], timeout=TIMEOUT)
+            if len(tokens_task_res.not_done) > 0:
+                res['status'] = 1
+                res['message'] = f"Orders and/or tokenuse data fetching timed out after {TIMEOUT} seconds."
+                return res
+
+            transactions = []
+            for task_res in tokens_task_res.done:
+                if task_res.result()['status'] != 0:
+                    res['status'] = task_res.result()['status']
+                    res['message'] = task_res.result()['message']
+                    return res
+                transactions.extend(task_res.result()['data'])
+            self.transactions = pd.DataFrame(transactions)
+
         return res
 
     def sync_to_db(self) -> dict:
         entity = {
             "PartitionKey": self.channel,
             "RowKey": self.user_id,
-            "n_tokens": self.n_tokens,
             'nickname': self.nickname,
             'avatar_url': self.avatar_url,
             'ip_history': json.dumps(self.ip_history),
         }
-        return self.db_op.update_entities(entity, self.table_name)
+        return self.db_op.update_entities(entity, self.users_table)
 
     def initialize_on_db(
         self,
         user_data: dict,
-        initial_token_amount: int
+        initial_token_amount: int,
     ) -> dict:
 
         entity = {
             "PartitionKey": self.channel,
             "RowKey": self.user_id,
-            "n_tokens": initial_token_amount,
             'nickname': self.user_id[:10] if len(user_data['nickname']) <= 0 else user_data['nickname'],
             'avatar_url': user_data['avatar_url'],
             'ip_history': json.dumps(
                 [(user_data['timestamp'], user_data['ip_address'])]
             )
         }
-
-        db_res = self.db_op.update_entities(entity, self.table_name)
+        # Step 1: Create the user
+        db_res = self.db_op.update_entities(entity, self.users_table)
         if db_res['status'] != 0:
             return db_res
+
+        # Step2: Award the user with new registration tokens
+        db_res = self.add_order(
+            n_tokens=initial_token_amount,
+            order_info={},
+            order_status="paid",
+            comments=f"[SYSTEM] Initial gift of {initial_token_amount} tokens."
+        )
+
         return self.sync_from_db()
 
-    def consume_token(self) -> dict:
-        res = {'status': 0, 'message': "Success"}
-        api_res = self.sync_from_db()
-        if api_res['status'] != 0:
-            return api_res
-        if self.n_tokens <= 0:
-            res['status'] = 2
-            res['message'] = f"User {self.user_id} has no tokens left"
-            return res
-        self.n_tokens -= 1
-        return self.sync_to_db()
+    def use_consumables(
+        self,
+        n_tokens: int = 1,
+        n_chars: int = 0,
+        comments: str = ""
+    ) -> dict:
+        # This is a class method wrapper for the generic function of the same name defined at the top
+        return use_consumables(
+            db_op=self.db_op,
+            table_name=self.tokenuse_table,
+            partition_key=f"{self.channel}_{self.user_id}",
+            n_tokens=n_tokens,
+            n_chars=n_chars,
+            comments=comments
+        )
+
+    def add_order(
+        self,
+        n_tokens: int,
+        order_info: dict,
+        order_status: str = "open",
+        comments: str = ""
+    ) -> dict:
+        # Generate a new order and save it in the table. The order can be open (pending payment) or paid (effective immediately)
+        row_key, timestamp = generate_event_id()
+
+        entity = {
+            'PartitionKey': f"{self.channel}_{self.user_id}",
+            'RowKey': row_key,
+            'timestamp': timestamp,
+            'data': json.dumps(order_info),
+            'tokens': n_tokens,
+            'status': order_status,
+            'comments': comments
+        }
+        return self.db_op.update_entities(entity, self.orders_table)
 
     def update_ip_history(self, user_data: dict) -> dict:
         self.ip_history.append((user_data['timestamp'], user_data['ip_address']))

@@ -2,9 +2,17 @@ import os
 import json
 import traceback
 from flask import Flask, request, jsonify
-from utils import AzureTableOp
+from utils import AzureTableOp, get_md5_hash_7pay
 
 DEBUG = True
+
+order_validation_keys = [
+    ('body', 'title'),
+    ('fee', 'money'),
+    ('no', 'no'),
+    ('pay_type', 'paytype'),
+    ('remark', 'remark'),
+]
 
 errors = []
 for key in [
@@ -102,8 +110,57 @@ def handle_wx_login():
 
 @app.route(os.getenv('PAYMENT_CALLBACK_ROUTE'), methods=['POST'])
 def handle_sevenpay_validation():
-    # TODO Integrate 7-pay API
-    pass
+    if request.method == "POST":
+        try:
+            form_data = request.form.to_dict()
+
+            # Step 1: Confirm that the signature is valid
+
+            # First, pop the sign key from form data
+            sevenpay_sign = form_data.pop('sign')
+
+            # Second, generate our own signature to compare
+            our_sign = get_md5_hash_7pay(
+                form_data,
+                os.getenv('SEVENPAY_PKEY')
+            )
+            if our_sign != sevenpay_sign:
+                return "Invalid signature"
+
+            # Step 2: Find the order and confirm that the data is correct
+            table_name = "orders"
+            if DEBUG:
+                table_name = table_name + "Test"
+
+            query_filter = f"RowKey eq @order_id"
+            select = None
+            parameters = {'order_id': form_data['order_id']}
+
+            table_res = azure_table_op.query_entities(query_filter, select, parameters, table_name)
+            if table_res['status'] != 0:
+                return f"Failed to query orders: {table_res['message']}"
+
+            # Perform order data validation
+            if len(table_res['data']) <= 0:
+                return "Invalid order_id"
+            entity = json.loads(table_res['data'][0])    # There should only be one order for the order_id
+            order_data = entity['data']
+            for our_key, sevenpay_key in order_validation_keys:
+                if order_data[our_key] != form_data[sevenpay_key]:
+                    return f"Mismatched key values: {our_key} ({order_data[our_key]}) != {sevenpay_key} ({form_data[sevenpay_key]})"
+
+            # Step 3: Update the order status to paid
+            entity['status'] = "paid"
+
+            # Step 4: Update the order in the table
+            table_res = azure_table_op.update_entities(entity, table_name)
+            if table_res['status'] != 0:
+                return f"Failed to update order: {table_res['message']}"
+
+            # Return success
+            return "success"
+        except:
+            return f"Could not handle validation request: {traceback.format_exc()}"
 
 
 if __name__ == '__main__':

@@ -18,7 +18,7 @@ from PIL import Image
 import streamlit as st
 from streamlit_modal import Modal
 import streamlit.components.v1 as components
-from utils import AzureTableOp, User
+from utils import AzureTableOp, User, generate_event_id, use_consumables
 from transformers import AutoTokenizer
 import azure.cognitiveservices.speech as speechsdk
 
@@ -45,12 +45,19 @@ for key in [
 
 _t = humanize.i18n.activate("zh_CN")    # Initialize humanize time output in Simplified Chinese
 
-DEMO_HISTORY_LIMIT = 10
-NEW_USER_FREE_TOKENS = 20
+DEMO_HISTORY_LIMIT = 5
+NEW_USER_FREE_TOKENS = 15
 FREE_TOKENS_PER_REFERRAL = 10
 
 SET_NAMES = ["小白", "进阶"]
 # SET_NAMES = ["小白", "进阶", "王者", "钻石"]
+
+USERS_TABLE = "users"
+ORDERS_TABLE = "orders"
+TOKENUSE_TABLE = "tokenuse"
+if DEBUG:
+    for table_name in [USERS_TABLE, ORDERS_TABLE, TOKENUSE_TABLE]:
+        table_name += "Test"
 
 TIMEOUT = 15
 N_RETRIES = 3
@@ -178,13 +185,6 @@ def get_css() -> str:
     # Read CSS code from style.css file
     with open(os.path.join(ROOT_DIR, "src", "style.css"), "r") as f:
         return f"<style>{f.read()}</style>"
-
-
-def generate_event_id() -> str:
-    # Generate event ID which is current timestamp + a 6-digit random number
-    d = datetime.datetime.now()
-    timestamp = calendar.timegm(d.timetuple())
-    return str(timestamp) + str(random.randint(100000, 999999)), timestamp
 
 
 def warm_up_api_server():
@@ -410,16 +410,15 @@ def render_login_popup(
                     user_id = entity['user_id']
                     user_data = json.loads(entity['data'])
                     user_data['timestamp'] = timestamp
-                    table_name = "users"
-                    if DEBUG:
-                        table_name += "Test"
 
                     # Build user object from temporary login data. The object is easier to manipulate later on.
                     st.session_state.USER = User(
                         channel="wx_user",
                         user_id=user_id,
                         db_op=table_op,
-                        table_name=table_name
+                        users_table=USERS_TABLE,
+                        orders_table=ORDERS_TABLE,
+                        tokenuse_table=TOKENUSE_TABLE
                     )
 
                     # Delete the temp entry from the table
@@ -467,7 +466,7 @@ def generate_prompt_from_memory():
 
         # We write a new prompt asking the model to summarize this middle part
         summarizable_memory = summarizable_memory + [
-            "The above is the conversation so far between you, the AI assistant, and a human user. Please summarize the topics discussed. Remember, do not write a direct reply to the user."
+            "The above is the conversation so far between you, the AI assistant, and a human user. Please summarize the topics discussed for your own reference. Remember, do not write a direct reply to the user."
         ]
         summarizable_str = "\n".join(summarizable_memory)
         summarizable_tokens = tokenizer.tokenize(summarizable_str)
@@ -563,15 +562,7 @@ def synthesize_text(
     if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
         length = result.audio_duration.total_seconds()
         b64 = base64.b64encode(result.audio_data).decode()
-        # md = f"""
-        # <audio autoplay="true">
-        #     <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
-        # </audio>
-        # """
-        # st.markdown(
-        #     md,
-        #     unsafe_allow_html=True,
-        # )
+        # This part works in conjunction with the initialized script.js and puts the audio data into the audio player
         components.html(f"""<script>window.parent.document.voicePlayer.src = "data:audio/mp3;base64,{b64}";</script>""", height=0, width=0)
         return length
     elif result.reason == speechsdk.ResultReason.Canceled:
@@ -580,31 +571,6 @@ def synthesize_text(
         if cancellation_details.reason == speechsdk.CancellationReason.Error:
             print(f"Error details: {cancellation_details.error_details}")
     return 0
-
-
-def use_consumables(
-    n_tokens: int = 1,
-    n_chars: int = 0,
-) -> dict:
-    # Add negative tokens to tokenUsage table under the user ID (or if not logged in, just under "unknown")
-    if "USER" in st.session_state:
-        partition_key = f"{st.session_state.USER.channel}_{st.session_state.USER.user_id}"
-    else:
-        partition_key = "unknown_user"
-    row_key, timestamp = generate_event_id()
-    entity = {
-        'PartitionKey': partition_key,
-        'RowKey': row_key,
-        'data': json.dumps({
-            'timestamp': timestamp,
-            'tokens': -n_tokens,
-            'chars': -n_chars,
-        })
-    }
-    table_name = "tokenuse"
-    if DEBUG:
-        table_name += "Test"
-    return azure_table_op.update_entities(entity, table_name)
 
 
 # Load Azure Speech configuration and validate its data
@@ -708,7 +674,7 @@ if "USER" not in st.session_state:
             if st.button("登录", key=f"login_button_{len(st.session_state.LOG)}"):
                 login_popup.open()
         with col2:
-            st.markdown(f"<small>免登录试用版，最多</small>`{DEMO_HISTORY_LIMIT}`<small>条消息的对话，登录后可获取更多聊天资格哦!</small>", unsafe_allow_html=True)
+            st.caption(f"<small>免登录试用版，登录后可以聊更多哦!</small>", unsafe_allow_html=True)
 else:
     # Sync user info from database and refresh the sidebar and header displays
     st.session_state.USER.sync_from_db()
@@ -719,7 +685,7 @@ else:
 
 # Render footer
 with footer:
-    st.info("免责声明：聊天机器人的输出基于用海量互联网文本数据训练的大型语言模型，仅供娱乐。对于信息的准确性、完整性、及时性等，小潘AI不承担任何责任。", icon="ℹ️")
+    st.info("免责声明：聊天机器人基于海量互联网文本训练的大型语言模型，仅供娱乐。小潘AI不对信息的准确性、完整性、及时性等承担任何保证或责任。", icon="ℹ️")
     st.markdown(f"<p style='text-align: right'><small><i><font color=gray>Build: {build_date}</font></i></small></p>", unsafe_allow_html=True)
 
 # Render the login popup with all the login logic included
@@ -831,23 +797,31 @@ if len(human_prompt) > 0:
         st.session_state.MEMORY[-1] += reply_text
 
         # Use consumables
-        use_consumables(NLP_tokens_used, chars)
-
-        # To deprecate
         if "USER" in st.session_state:
-            action_res = st.session_state.USER.consume_token()
-            if action_res['status'] != 0:
-                st.error(f"无法消费聊天币: {action_res['message']}")
-                st.stop()
+            partition_key = f"{st.session_state.USER.channel}_{st.session_state.USER.user_id}"
+        else:
+            partition_key = "unknown_user"
+        action_res = use_consumables(
+            azure_table_op,
+            TOKENUSE_TABLE,
+            partition_key,
+            NLP_tokens_used,
+            chars
+        )
+        if action_res['status'] != 0:
+            st.error(f"无法消费聊天币: {action_res['message']}")
+            st.stop()
 
+        # Wrapping up one "round"
+        if "USER" in st.session_state:
             # Update the sidebar and header token number
             with sidebar.container():
                 update_sidebar()
             with header.container():
                 update_header()
 
-        elif len(st.session_state.LOG) > DEMO_HISTORY_LIMIT:
-            st.warning(f"**公测版，限{DEMO_HISTORY_LIMIT}条消息的对话**\n\n感谢您对我们的兴趣，想获取更多消息次数可以登录哦！")
+        elif len(st.session_state.LOG) > DEMO_HISTORY_LIMIT * 2:
+            st.warning(f"**公测版，限{DEMO_HISTORY_LIMIT}次对话轮回**\n\n感谢您对小潘AI的兴趣。若想继续聊天，请在页面顶部进行登录！")
             prompt_box.empty()
             st.stop()
 
