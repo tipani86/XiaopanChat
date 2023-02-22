@@ -1,4 +1,4 @@
-# 小潘 Xiaopan.AI Chatbot
+# 小潘AI Xiaopan.AI Chatbot
 A chat service built using Streamlit, OpenAI and Azure APIs
 
 ## Introduction
