@@ -102,9 +102,22 @@ def handle_wx_login():
 
 @app.route(os.getenv('PAYMENT_CALLBACK_ROUTE'), methods=['POST'])
 def handle_sevenpay_validation():
+    table_name = "orders"
+    if DEBUG:
+        table_name += "Test"
+
     if request.method == "POST":
         try:
             form_data = request.form.to_dict()
+
+            # Just dump the whole form data to orders table for debugging
+            if DEBUG:
+                entity = {
+                    'PartitionKey': "DEBUG",
+                    'RowKey': form_data['no'],
+                    'data': json.dumps(form_data)
+                }
+                table_res = azure_table_op.insert_entity(entity, table_name)
 
             # Step 1: Confirm that the signature is valid
 
@@ -120,10 +133,6 @@ def handle_sevenpay_validation():
                 return "Invalid signature"
 
             # Step 2: Find the order and confirm that the data is correct
-            table_name = "orders"
-            if DEBUG:
-                table_name += "Test"
-
             query_filter = f"RowKey eq @order_id"
             select = None
             parameters = {'order_id': form_data['order_id']}
