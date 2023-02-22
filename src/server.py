@@ -117,7 +117,7 @@ def handle_sevenpay_validation():
                     'RowKey': form_data['no'],
                     'data': json.dumps(form_data)
                 }
-                table_res = azure_table_op.insert_entity(entity, table_name)
+                table_res = azure_table_op.update_entities(entity, table_name)
 
             # Step 1: Confirm that the signature is valid
 
