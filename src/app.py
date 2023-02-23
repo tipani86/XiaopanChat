@@ -114,7 +114,7 @@ def get_chat_message(
     # Formats the message in an chat fashion (user right, reply left)
     div_class = "AI-line"
     color = "rgb(240, 242, 246)"
-    file_path = os.path.join(ROOT_DIR, "src", "AI_icon.png")
+    file_path = os.path.join(ROOT_DIR, "src", "assets", "AI_icon.png")
     src = f"data:image/gif;base64,{get_local_img(file_path)}"
     if align == "right":
         div_class = "human-line"
@@ -122,7 +122,7 @@ def get_chat_message(
         if "USER" in st.session_state:
             src = st.session_state.USER.avatar_url
         else:
-            file_path = os.path.join(ROOT_DIR, "src", "user_icon.png")
+            file_path = os.path.join(ROOT_DIR, "src", "assets", "user_icon.png")
             src = f"data:image/gif;base64,{get_local_img(file_path)}"
     icon_code = f"<img class='chat-icon' src='{src}' width=32 height=32 alt='avatar'>"
     formatted_contents = f"""
@@ -164,6 +164,10 @@ def update_sidebar() -> None:
             st.markdown(f"<img class='chat-icon' src='{st.session_state.USER.avatar_url}' width=64 height=64 alt='avatar'>", unsafe_allow_html=True)
         with col2:
             st.metric("**剩余聊天币**", f"{st.session_state.USER.n_tokens}枚")
+
+        refresh = st.button("刷新页面", key=f"refresh_{len(st.session_state.LOG)}")
+        if refresh:
+            st.experimental_rerun()
 
         cat_expander = st.expander("💰 充值聊天币")
         with cat_expander:
@@ -212,7 +216,6 @@ def update_sidebar() -> None:
                 }
 
                 with payment_code_placeholder.container():
-                    refresh = False
                     with st.spinner("订单生成中..."):
                         # First, add an open order to the database
                         action_res = st.session_state.USER.add_order(catalogue[set_name]['amount'], order_info)
@@ -227,10 +230,10 @@ def update_sidebar() -> None:
                         if payment_res['code'] != "success":
                             st.error(f"生成支付码失败：{payment_res['msg']}")
                     if payment_res['code'] == "success":
+                        alipay_logo_path = os.path.join(ROOT_DIR, "src", "assets", "120_348_alipay.png")
+                        st.image(f"data:image/gif;base64,{get_local_img(alipay_logo_path)}")
                         st.image(payment_res['img'])
-                        refresh = st.button("支付成功后点此按钮刷新页面", key=f"refresh_{len(st.session_state.LOG)}")
-                    if refresh:
-                        st.experimental_rerun()
+                        st.caption(f"支付完成后请点击上方的刷新按钮，查看聊天币余额。")
 
         # st.write("")
         with st.expander("💻 近10次登录记录"):
@@ -249,7 +252,7 @@ def update_sidebar() -> None:
             timestamp_now = calendar.timegm(d.timetuple())
 
             # We need to sort the transactions dataframe in reverse order and only show positive token values
-            transactions = st.session_state.USER.transactions.sort_values(by="timestamp", ascending=False)
+            transactions = st.session_state.USER.transactions.sort_values(by="eventtime", ascending=False)
             transactions = transactions[transactions["tokens"] > 0]
             formatted_transactions = []
             for row in transactions.itertuples():
@@ -257,8 +260,10 @@ def update_sidebar() -> None:
                     message = f"[系统赠送] +{row.tokens}币"
                 else:
                     message = f"充值 +{row.tokens}币"
-                formatted_transactions.append(f"{message}, {humanize.naturaltime(datetime.timedelta(seconds=timestamp_now - row.timestamp))}")
+                formatted_transactions.append(f"{message}, {humanize.naturaltime(datetime.timedelta(seconds=timestamp_now - row.eventtime))}")
             st.caption("<br>".join(formatted_transactions), unsafe_allow_html=True)
+
+        st.header("")
 
 
 def render_login_popup(
@@ -399,13 +404,19 @@ def render_login_popup(
                             st.stop()
                         if "NEW_USER" not in st.session_state:
                             st.session_state.NEW_USER = True
+                    elif action_res['status'] != 0:
+                        login_popup.close()
+                        st.error(f"无法同步用户信息: {action_res['message']}")
+                        st.stop()
                     else:
-                        # Normal login, we update ip history from user_data
+                        # Normal login, we update current tokens amount and ip history from user_data
+                        st.session_state.USER.n_tokens = action_res['n_tokens']
                         action_res = st.session_state.USER.update_ip_history(user_data)
                         if action_res['status'] != 0:
                             login_popup.close()
                             st.error(f"无法更新IP地址: {action_res['message']}")
                             st.stop()
+                    login_popup.close()
 
 
 def generate_prompt_from_memory():
@@ -483,7 +494,7 @@ def generate_prompt_from_memory():
 
 
 # Initialize page config
-favicon = get_favicon(os.path.join(ROOT_DIR, "src", "AI_icon.png"))
+favicon = get_favicon(os.path.join(ROOT_DIR, "src", "assets", "AI_icon.png"))
 st.set_page_config(
     page_title="小潘AI",
     page_icon=favicon,
@@ -599,12 +610,6 @@ st.markdown(get_css(), unsafe_allow_html=True)
 components.html(get_js(), height=0, width=0)
 
 
-# # Read browser query params and save them in session state
-# query_params = st.experimental_get_query_params()
-# if DEBUG:
-#     st.write(f"`Query params: {query_params}`")
-
-
 # Initialize/maintain a chat log and chat memory in Streamlit's session state
 # Log is the actual line by line chat, while memory is limited by model's maximum token context length
 init_prompt = "You are an AI assistant called 小潘 (Xiaopan). You're very capable, able answer various messages from a human user and provide helpful replies. You can add HTML your responses, for example when asked to list something. You have no language preferences, and will always reply in the same language that the human writes. Below is the chat log between you and the human:"
@@ -630,8 +635,9 @@ else:
     if action_res['status'] != 0:
         st.error(f"同步用户信息失败！{action_res['msg']}")
         st.stop()
-    if 'action' in action_res and action_res['action'] == 'tokens_increased':
+    if action_res['n_tokens'] > st.session_state.USER.n_tokens:
         st.balloons()
+    st.session_state.USER.n_tokens = action_res['n_tokens']
     with sidebar.container():
         update_sidebar()
     with header.container():
@@ -703,7 +709,7 @@ if len(human_prompt) > 0:
 
         # This is one of those small three-dot animations to indicate the bot is "writing"
         writing_animation = st.empty()
-        file_path = os.path.join(ROOT_DIR, "src", "loading.gif")
+        file_path = os.path.join(ROOT_DIR, "src", "assets", "loading.gif")
         writing_animation.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;<img src='data:image/gif;base64,{get_local_img(file_path)}' width=30 height=10>", unsafe_allow_html=True)
 
         # Call the OpenAI API to generate a response with retry, cooldown and backoff
@@ -756,6 +762,7 @@ if len(human_prompt) > 0:
             azure_table_op,
             TOKENUSE_TABLE,
             partition_key,
+            1,  # Chat tokens used
             NLP_tokens_used,
             chars
         )
@@ -799,21 +806,7 @@ if len(human_prompt) > 0:
         st.session_state.LOG[-1] += reply_text
         st.session_state.MEMORY[-1] += reply_text
 
-        # Wrapping up one "round"
-        if "USER" in st.session_state:
-            # Update the sidebar and header token number
-            action_res = st.session_state.USER.sync_from_db()
-            if action_res['status'] != 0:
-                st.error(f"同步用户信息失败！{action_res['msg']}")
-                st.stop()
-            if 'action' in action_res and action_res['action'] == 'tokens_increased':
-                st.balloons()
-            with sidebar.container():
-                update_sidebar()
-            with header.container():
-                update_header()
-
-        elif len(st.session_state.LOG) > DEMO_HISTORY_LIMIT * 2:
+        if "USER" not in st.session_state and len(st.session_state.LOG) > DEMO_HISTORY_LIMIT * 2:
             st.warning(f"**公测版，限{DEMO_HISTORY_LIMIT}次对话轮回**\n\n感谢您对小潘AI的兴趣。若想继续聊天，请在页面顶部进行登录！")
             prompt_box.empty()
             st.stop()

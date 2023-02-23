@@ -36,7 +36,8 @@ def use_consumables(
     db_op,
     table_name: str,
     partition_key: str = "unknown_user",
-    n_tokens: int = 1,
+    chat_tokens: int = 1,
+    nlp_tokens: int = 0,
     n_chars: int = 0,
     comments: str = ""
 ) -> dict:
@@ -45,8 +46,9 @@ def use_consumables(
     entity = {
         'PartitionKey': partition_key,
         'RowKey': row_key,
-        'timestamp': timestamp,
-        'tokens': -n_tokens,
+        'eventtime': timestamp,
+        'tokens': -chat_tokens,
+        'nlptokens': -nlp_tokens,
         'chars': -n_chars,
         'comments': comments
     }
@@ -427,11 +429,11 @@ class User:
         self.orders_table = orders_table
         self.tokenuse_table = tokenuse_table
         self.transactions = None
-        self.tokens = None
+        self.n_tokens = 0
         self.executor = ThreadPoolExecutor(3)
 
     def sync_from_db(self) -> dict:
-        res = {'status': 0, 'message': "Success", 'action': None}
+        res = {'status': 0, 'message': "Success", 'n_tokens': 0}
         # Fetch the remaining user, orders and tokenuse table data with parallelism
 
         # Submit user search
@@ -446,7 +448,7 @@ class User:
 
         # Submit orders and tokenuse search (they share the same select but slightly different
         # parameters: we only want to see the orders which are "paid" because those are real)
-        select = ["timestamp", "tokens", "comments"]
+        select = ["eventtime", "tokens", "comments"]
 
         query_filter = f"PartitionKey eq @key and status eq @status"
         parameters = {'key': f"{self.channel}_{self.user_id}", 'status': "paid"}
@@ -512,12 +514,8 @@ class User:
             else:
                 tokens = self.transactions['tokens'].sum()
 
-            # Check whether an increase (paid order) happened, if so the frontend will add celebration balloons :)
-            if type(self.tokens) == int and tokens > self.n_tokens:
-                res['action'] = "tokens_increased"
-
-            # Update user's current tokens
-            self.n_tokens = tokens
+            # Update the user's most up-to-date token balance into res
+            res['n_tokens'] = tokens
 
         return res
 
@@ -593,7 +591,7 @@ class User:
         entity = {
             'PartitionKey': f"{self.channel}_{self.user_id}",
             'RowKey': str(order_info['no']),
-            'timestamp': timestamp,
+            'eventtime': timestamp,
             'data': json.dumps(order_info),
             'tokens': n_tokens,
             'status': order_status,
