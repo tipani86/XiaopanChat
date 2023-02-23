@@ -115,6 +115,7 @@ def handle_sevenpay_validation():
         try:
             form_data = request.form.to_dict()
             logger.info(form_data)
+            logger.info(list(form_data.keys()))
 
             # Just dump the whole form data to orders table for debugging
             if DEBUG:
