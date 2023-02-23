@@ -140,13 +140,16 @@ def get_payment_QR(
     order_info: dict
 ) -> dict:
     # Send payment request and get payment QR code from 7-pay API
-    sign = get_md5_hash_7pay(order_info, os.getenv('SEVEN_PAY_PKEY'))
-    order_info['sign'] = sign
+    sign = get_md5_hash_7pay(order_info, os.getenv('SEVENPAY_PKEY'))
     if DEBUG:
         print(order_info)
+    query_str = "&".join([f"{k}={v}" for k, v in order_info.items()])
+    query_str += f"&sign={sign}"
+    if DEBUG:
+        print(query_str)
     for i in range(N_RETRIES):
         try:
-            response = requests.request("POST", url, json=order_info, timeout=TIMEOUT)
+            response = requests.get(f"{url}?{query_str}", timeout=TIMEOUT)
             break
         except Exception as e:
             if i == N_RETRIES - 1:
@@ -180,6 +183,8 @@ def get_md5_hash_7pay(
         data_str += f"{key}={data[key]}&"
     # Step 2: Append pkey to the end of the string but with a key 'key'
     data_str += f"key={pkey}"
+    if DEBUG:
+        print(data_str)
     # Step 3: Return the lowercase version of the calculated md5 hash of the string
     return hashlib.md5(data_str.encode('utf-8')).hexdigest().lower()
 

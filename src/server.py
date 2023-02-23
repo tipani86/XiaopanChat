@@ -108,14 +108,14 @@ def handle_sevenpay_validation():
 
     if request.method == "POST":
         try:
-            form_data = request.form.to_dict()
+            json_data = request.json
 
             # Just dump the whole form data to orders table for debugging
             if DEBUG:
                 entity = {
                     'PartitionKey': "DEBUG",
-                    'RowKey': str(form_data['no']),
-                    'data': json.dumps(form_data)
+                    'RowKey': str(json_data['no']),
+                    'data': json.dumps(json_data)
                 }
                 table_res = azure_table_op.update_entities(entity, table_name)
 

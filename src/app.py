@@ -203,12 +203,12 @@ def update_sidebar() -> None:
                 # Format requirements: http://7-pay.cn/doc.php#d2
                 order_info = {
                     'body': str(set_name),
-                    'fee': f"{price:.2f}",
+                    'fee': round(price, 2),
                     'pay_type': "alipay",
                     'no': int(row_key),
                     'notify_url': f"{payment_cfg['callback_endpoint']}{os.getenv('PAYMENT_CALLBACK_ROUTE')}",
                     'pid': os.getenv('SEVENPAY_PID'),
-                    'remark':str(remark)
+                    'remark': str(remark)
                 }
 
                 with payment_code_placeholder.container():
