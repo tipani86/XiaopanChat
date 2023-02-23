@@ -12,7 +12,6 @@ import calendar
 import traceback
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, wait
-import azure.cognitiveservices.speech as speechsdk
 from azure.data.tables import TableClient, UpdateMode
 from azure.core.exceptions import ResourceExistsError, HttpResponseError, ResourceNotFoundError
 from app_config import DEBUG, TIMEOUT, N_RETRIES, COOLDOWN, BACKOFF
@@ -93,6 +92,7 @@ def synthesize_text(
     text: str,
     config: dict,
     synthesizer,
+    speechsdk
 ) -> tuple:
     # Clean up the text so it doesn't contain weird tokens
     CLEANR = re.compile('<.*?>|&([a-z0-9]+|#[0-9]{1,6}|#x[0-9a-f]{1,6});')

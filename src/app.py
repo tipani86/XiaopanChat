@@ -738,7 +738,7 @@ if len(human_prompt) > 0:
             print(f"Language detection result: {language_res['data']}")
         if 'zh-cn' in language_res['data']:
             # Synthesize the response and play it as audio
-            audio_play_time, b64 = synthesize_text(reply_text, speech_cfg, azure_synthesizer)
+            audio_play_time, b64 = synthesize_text(reply_text, speech_cfg, azure_synthesizer, speechsdk)
             chars = len(reply_text)
             if audio_play_time > 0 and len(b64) > 0:
                 # This part works in conjunction with the initialized script.js and puts the audio data into the audio player

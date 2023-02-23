@@ -122,20 +122,23 @@ def handle_sevenpay_validation():
             # Step 1: Confirm that the signature is valid
 
             # First, pop the sign key from form data
-            sevenpay_sign = form_data.pop('sign')
+            sevenpay_sign = json_data.pop('sign')
 
             # Second, generate our own signature to compare
             our_sign = get_md5_hash_7pay(
-                form_data,
+                json_data,
                 os.getenv('SEVENPAY_PKEY')
             )
+            if DEBUG:
+                print(json_data)
+                print(our_sign)
             if our_sign != sevenpay_sign:
-                return "Invalid signature"
+                return f"Invalid signature: {our_sign} vs {sevenpay_sign}"
 
             # Step 2: Find the order and confirm that the data is correct
-            query_filter = f"RowKey eq @order_id"
+            query_filter = f"PartitionKey ne @debug and RowKey eq @order_id"
             select = None
-            parameters = {'order_id': str(form_data['no'])}
+            parameters = {'debug': "DEBUG", 'order_id': str(json_data['no'])}
 
             table_res = azure_table_op.query_entities(query_filter, select, parameters, table_name)
             if table_res['status'] != 0:
@@ -144,11 +147,18 @@ def handle_sevenpay_validation():
             # Perform order data validation
             if len(table_res['data']) <= 0:
                 return "Invalid order_id"
-            entity = json.loads(table_res['data'][0])    # There should only be one order for the order_id
-            order_data = entity['data']
+            entity = table_res['data'][0]   # There should only be one order for the order_id
+            order_data = json.loads(entity['data'])
+            if DEBUG:
+                print(f"Order data: {order_data}")
             for our_key, sevenpay_key in ORDER_VALIDATION_KEYS:
-                if str(order_data[our_key]) != str(form_data[sevenpay_key]):
-                    return f"Mismatched key values: {our_key} ({order_data[our_key]}) != {sevenpay_key} ({form_data[sevenpay_key]})"
+                our_value, sevenpay_value = order_data[our_key], json_data[sevenpay_key]
+                if our_key == "fee" and sevenpay_key == "money":
+                    # Convert to float so they have the same number of decimals
+                    our_value = float(our_value)
+                    sevenpay_value = float(sevenpay_value)
+                if str(our_value) != str(sevenpay_value):
+                    return f"Mismatched key values: {our_key} ({our_value}) != {sevenpay_key} ({sevenpay_value})"
 
             # Step 3: Return early success if status is already paid
             if entity['status'] == "paid":

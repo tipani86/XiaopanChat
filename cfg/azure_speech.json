@@ -2,6 +2,6 @@
     "region": "eastasia",
     "voice": "zh-CN-XiaoshuangNeural",
     "style": "Chat",
-    "rate": 0.9,
+    "rate": 1.0,
     "pitch": "-10%"
 }
