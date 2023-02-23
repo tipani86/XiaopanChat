@@ -1,17 +1,36 @@
 import os
+import re
 import time
 import json
 import zlib
+import base64
 import random
 import hashlib
+import requests
 import datetime
 import calendar
 import traceback
 import pandas as pd
-from app_config import DEBUG, TIMEOUT
 from concurrent.futures import ThreadPoolExecutor, wait
+import azure.cognitiveservices.speech as speechsdk
 from azure.data.tables import TableClient, UpdateMode
 from azure.core.exceptions import ResourceExistsError, HttpResponseError, ResourceNotFoundError
+from app_config import DEBUG, TIMEOUT, N_RETRIES, COOLDOWN, BACKOFF
+
+
+def warm_up_api_server(url):
+    res = {'status': 0, 'msg': "Success"}
+    # Warm up Xiaopan API server with retry, backoff etc.
+    for i in range(N_RETRIES * 2):
+        try:
+            r = requests.get(url, timeout=TIMEOUT)
+            if r.status_code == 200:
+                return res
+        except Exception as e:
+            time.sleep(COOLDOWN * BACKOFF ** i)
+    res['status'] = 2
+    res['msg'] = f"Failed to warm up API server!"
+    return res
 
 
 def use_consumables(
@@ -33,6 +52,108 @@ def use_consumables(
         'comments': comments
     }
     return db_op.update_entities(entity, table_name)
+
+
+def detect_language(text: str) -> dict:
+    # Detect language of the text using a call to Rapid API with retry logic
+    res = {'status': 0, 'msg': 'success', 'data': None}
+
+    url = "https://text-analysis12.p.rapidapi.com/language-detection/api/v1.1"
+    payload = {'text': text}
+    headers = {
+        'content-type': "application/json",
+        'X-RapidAPI-Key': f"{os.getenv('RAPID_API_KEY')}",
+        'X-RapidAPI-Host': "text-analysis12.p.rapidapi.com"
+    }
+    for i in range(N_RETRIES):
+        try:
+            response = requests.request("POST", url, json=payload, headers=headers, timeout=TIMEOUT)
+            break
+        except Exception as e:
+            if i == N_RETRIES - 1:
+                res['status'] = 2
+                res['msg'] = e
+                return res
+            else:
+                time.sleep(COOLDOWN * BACKOFF ** i)
+    if response.status_code != 200:
+        res['status'] = 2
+        res['msg'] = f"{response.status_code}: {response.text}"
+        return res
+    resp = response.json()
+    if not resp['ok']:
+        res['status'] = 2
+        res['msg'] = resp['msg']
+        return res
+    res['data'] = resp['language_probability']
+    return res
+
+
+def synthesize_text(
+    text: str,
+    config: dict,
+    synthesizer,
+) -> tuple:
+    # Clean up the text so it doesn't contain weird tokens
+    CLEANR = re.compile('<.*?>|&([a-z0-9]+|#[0-9]{1,6}|#x[0-9a-f]{1,6});')
+    text = re.sub(CLEANR, '', text)
+    # Add speaking style if configured
+    if 'style' in config and config['style'] is not None:
+        ssml_string = f"""
+            <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="en-US">
+                <voice name="{config['voice'] if 'voice' in config else 'zh-CN-XiaoxiaoNeural'}">
+                <mstts:express-as style='{config['style']}'>
+                    <prosody rate="{config['rate'] if 'rate' in config else 1.0}" pitch="{config['pitch'] if 'pitch' in config else '0%'}">
+                        {text}
+                    </prosody>
+                </mstts:express-as>
+                </voice>
+            </speak>
+        """
+    else:
+        ssml_string = f"""
+            <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-US">
+                <voice name="{config['voice'] if 'voice' in config else 'zh-CN-XiaoxiaoNeural'}">
+                    <prosody rate="{config['rate'] if 'rate' in config else 1.0}" pitch="{config['pitch'] if 'pitch' in config else '0%'}">
+                        {text}
+                    </prosody>
+                </voice>
+            </speak>
+        """
+    result = synthesizer.speak_ssml_async(ssml_string).get()
+    if DEBUG:
+        print(result)
+    if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
+        length = result.audio_duration.total_seconds()
+        b64 = base64.b64encode(result.audio_data).decode()
+        return length, b64
+    elif result.reason == speechsdk.ResultReason.Canceled:
+        cancellation_details = result.cancellation_details
+        print(f"Speech synthesis canceled: {cancellation_details.reason}")
+        if cancellation_details.reason == speechsdk.CancellationReason.Error:
+            print(f"Error details: {cancellation_details.error_details}")
+    return 0, ""
+
+
+def get_payment_QR(
+    url: str,
+    order_info: dict
+) -> dict:
+    # Send payment request and get payment QR code from 7-pay API
+    sign = get_md5_hash_7pay(order_info, os.getenv('SEVEN_PAY_PKEY'))
+    order_info['sign'] = sign
+    for i in range(N_RETRIES):
+        try:
+            response = requests.request("POST", url, json=order_info, timeout=TIMEOUT)
+            break
+        except Exception as e:
+            if i == N_RETRIES - 1:
+                return {'code': f"Payment request timed out: {e}"}
+            else:
+                time.sleep(COOLDOWN * BACKOFF ** i)
+    if response.status_code != 200:
+        return {'code': f"Payment request failed with code {response.status_code}: {response.text}"}
+    return response.json()
 
 
 def generate_event_id() -> tuple:
@@ -299,10 +420,11 @@ class User:
         self.orders_table = orders_table
         self.tokenuse_table = tokenuse_table
         self.transactions = None
+        self.tokens = None
         self.executor = ThreadPoolExecutor(3)
 
     def sync_from_db(self) -> dict:
-        res = {'status': 0, 'message': "Success"}
+        res = {'status': 0, 'message': "Success", 'action': None}
         # Fetch the remaining user, orders and tokenuse table data with parallelism
 
         # Submit user search
@@ -379,9 +501,16 @@ class User:
                 print(self.transactions)
             # Sum up all the tokens to arrive at the current balance
             if len(self.transactions) <= 0:
-                self.n_tokens = 0
+                tokens = 0
             else:
-                self.n_tokens = self.transactions['tokens'].sum()
+                tokens = self.transactions['tokens'].sum()
+
+            # Check whether an increase (paid order) happened, if so the frontend will add celebration balloons :)
+            if type(self.tokens) == int and tokens > self.n_tokens:
+                res['action'] = "tokens_increased"
+
+            # Update user's current tokens
+            self.n_tokens = tokens
 
         return res
 

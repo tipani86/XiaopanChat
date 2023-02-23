@@ -1,5 +1,4 @@
 import os
-import re
 import time
 import json
 import base64
@@ -19,7 +18,8 @@ import streamlit.components.v1 as components
 from transformers import AutoTokenizer
 import azure.cognitiveservices.speech as speechsdk
 from concurrent.futures import ThreadPoolExecutor, wait
-from utils import AzureTableOp, User, use_consumables, generate_event_id
+from utils import AzureTableOp, User
+from utils import use_consumables, generate_event_id, warm_up_api_server, synthesize_text, detect_language, get_payment_QR
 
 # Set global variables
 
@@ -104,25 +104,11 @@ def get_css() -> str:
         return f"<style>{f.read()}</style>"
 
 
-def warm_up_api_server():
-    res = {'status': 0, 'msg': "Success"}
-    # Warm up Xiaopan API server with retry, backoff etc.
-    for i in range(N_RETRIES * 2):
-        try:
-            r = requests.get("https://xiaopan-chat-api.azurewebsites.net/", timeout=TIMEOUT)
-            if r.status_code == 200:
-                return res
-        except Exception as e:
-            time.sleep(COOLDOWN * BACKOFF ** i)
-    res['status'] = 2
-    res['msg'] = f"Failed to warm up API server!"
-    return res
-
-
 def get_chat_message(
     contents: str = "",
     align: str = "left"
 ) -> str:
+    # Formats the message in an chat fashion (user right, reply left)
     div_class = "AI-line"
     color = "rgb(240, 242, 246)"
     file_path = os.path.join(ROOT_DIR, "src", "AI_icon.png")
@@ -220,8 +206,17 @@ def update_sidebar() -> None:
                 if action_res['status'] != 0:
                     st.error(f"生成订单失败：{action_res['msg']}")
                     st.stop()
+                # Second send the order info to the payment gateway and request QR code
+                with st.spinner("支付码生成中..."):
+                    payment_res = get_payment_QR(
+                        payment_cfg['endpoint'],
+                        order_info
+                    )
+                if payment_res['code'] != "success":
+                    st.error(f"生成订单失败：{payment_res['code']}")
+                    st.stop()
                 with payment_code_placeholder.container():
-                    st.write(f"**{set_name}** button pressed")
+                    st.image(payment_res['img'])
                     refresh = st.button("支付成功后点此按钮刷新页面", key=f"refresh_{len(st.session_state.LOG)}")
                 if refresh:
                     st.experimental_rerun()
@@ -473,85 +468,6 @@ def generate_prompt_from_memory():
     return memory_str, tokens_used
 
 
-def synthesize_text(
-    text: str,
-    config: dict,
-    synthesizer,
-) -> None:
-    # Clean up the text so it doesn't contain weird tokens
-    CLEANR = re.compile('<.*?>|&([a-z0-9]+|#[0-9]{1,6}|#x[0-9a-f]{1,6});')
-    text = re.sub(CLEANR, '', text)
-    # Add speaking style if configured
-    if 'style' in config and config['style'] is not None:
-        ssml_string = f"""
-            <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="en-US">
-                <voice name="{config['voice'] if 'voice' in config else 'zh-CN-XiaoxiaoNeural'}">
-                <mstts:express-as style='{config['style']}'>
-                    <prosody rate="{config['rate'] if 'rate' in config else 1.0}" pitch="{config['pitch'] if 'pitch' in config else '0%'}">
-                        {text}
-                    </prosody>
-                </mstts:express-as>
-                </voice>
-            </speak>
-        """
-    else:
-        ssml_string = f"""
-            <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-US">
-                <voice name="{config['voice'] if 'voice' in config else 'zh-CN-XiaoxiaoNeural'}">
-                    <prosody rate="{config['rate'] if 'rate' in config else 1.0}" pitch="{config['pitch'] if 'pitch' in config else '0%'}">
-                        {text}
-                    </prosody>
-                </voice>
-            </speak>
-        """
-    result = synthesizer.speak_ssml_async(ssml_string).get()
-    if DEBUG:
-        print(result)
-    if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
-        length = result.audio_duration.total_seconds()
-        b64 = base64.b64encode(result.audio_data).decode()
-        # This part works in conjunction with the initialized script.js and puts the audio data into the audio player
-        components.html(f"""<script>window.parent.document.voicePlayer.src = "data:audio/mp3;base64,{b64}";</script>""", height=0, width=0)
-        return length
-    elif result.reason == speechsdk.ResultReason.Canceled:
-        cancellation_details = result.cancellation_details
-        print(f"Speech synthesis canceled: {cancellation_details.reason}")
-        if cancellation_details.reason == speechsdk.CancellationReason.Error:
-            print(f"Error details: {cancellation_details.error_details}")
-    return 0
-
-
-def detect_language(text: str) -> dict:
-    res = {'status': 0, 'msg': 'success', 'data': None}
-
-    # Detect language of the text using a call to Rapid API with retry logic
-    url = "https://text-analysis12.p.rapidapi.com/language-detection/api/v1.1"
-    payload = {'text': text}
-    headers = {
-        'content-type': "application/json",
-        'X-RapidAPI-Key': f"{os.getenv('RAPID_API_KEY')}",
-        'X-RapidAPI-Host': "text-analysis12.p.rapidapi.com"
-    }
-    for i in range(N_RETRIES):
-        try:
-            response = requests.request("POST", url, json=payload, headers=headers, timeout=TIMEOUT)
-            break
-        except Exception as e:
-            if i == N_RETRIES - 1:
-                res['status'] = 2
-                res['msg'] = f"语言检测失败: {e}"
-            else:
-                time.sleep(COOLDOWN * BACKOFF ** i)
-    if response.status_code != 200:
-        res['status'] = 2
-        res['msg'] = f"语言检测失败: {response.status_code}"
-    resp = response.json()
-    if not resp['ok']:
-        res['status'] = 2
-        res['msg'] = f"语言检测失败: {resp['msg']}"
-    res['data'] = resp['language_probability']
-    return res
-
 ### INITIALIZE AND LOAD ###
 
 
@@ -633,7 +549,7 @@ else:
 # (Azure tends to spin them down after some inactivity)
 if "WARM_UP" not in st.session_state or not st.session_state.WARM_UP:
     with st.spinner("小潘AI正在预热中..."):
-        warm_up_res = warm_up_api_server()
+        warm_up_res = warm_up_api_server(payment_cfg['callback_endpoint'])
 
     if warm_up_res['status'] != 0:
         st.error(f"小潘AI启动失败！{warm_up_res['msg']}")
@@ -699,7 +615,12 @@ if "USER" not in st.session_state:
             st.caption(f"<small>免登录试用版，登录后可以聊更多哦!</small>", unsafe_allow_html=True)
 else:
     # Sync user info from database and refresh the sidebar and header displays
-    st.session_state.USER.sync_from_db()
+    action_res = st.session_state.USER.sync_from_db()
+    if action_res['status'] != 0:
+        st.error(f"同步用户信息失败！{action_res['msg']}")
+        st.stop()
+    if 'action' in action_res and action_res['action'] == 'tokens_increased':
+        st.balloons()
     with sidebar.container():
         update_sidebar()
     with header.container():
@@ -800,14 +721,17 @@ if len(human_prompt) > 0:
         language_res = detect_language(reply_text)
         if language_res['status'] != 0:
             reply_box.empty()
-            st.error(f"小潘AI出错了: {language_res['msg']}")
+            st.error(f"识别语言失败: {language_res['msg']}")
             st.stop()
         if DEBUG:
             print(f"Language detection result: {language_res['data']}")
         if 'zh-cn' in language_res['data']:
             # Synthesize the response and play it as audio
-            audio_play_time = synthesize_text(reply_text, speech_cfg, azure_synthesizer)
+            audio_play_time, b64 = synthesize_text(reply_text, speech_cfg, azure_synthesizer)
             chars = len(reply_text)
+            if audio_play_time > 0 and len(b64) > 0:
+                # This part works in conjunction with the initialized script.js and puts the audio data into the audio player
+                components.html(f"""<script>window.parent.document.voicePlayer.src = "data:audio/mp3;base64,{b64}";</script>""", height=0, width=0)
         else:
             audio_play_time, chars = 0, 0
 
@@ -867,6 +791,12 @@ if len(human_prompt) > 0:
         # Wrapping up one "round"
         if "USER" in st.session_state:
             # Update the sidebar and header token number
+            action_res = st.session_state.USER.sync_from_db()
+            if action_res['status'] != 0:
+                st.error(f"同步用户信息失败！{action_res['msg']}")
+                st.stop()
+            if 'action' in action_res and action_res['action'] == 'tokens_increased':
+                st.balloons()
             with sidebar.container():
                 update_sidebar()
             with header.container():
