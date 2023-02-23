@@ -106,77 +106,80 @@ def handle_sevenpay_validation():
     if DEBUG:
         table_name += "Test"
 
-    print(request.headers)
-    print(request.text)
-    print(request.json)
-
-    try:
-        json_data = request.json
-
-        # Just dump the whole form data to orders table for debugging
+    if request.method == "POST":
         if DEBUG:
-            entity = {
-                'PartitionKey': "DEBUG",
-                'RowKey': str(json_data['no']),
-                'data': json.dumps(json_data)
-            }
+            print(f"request data: {request.data}")
+            print(f"request form: {request.form}")
+            print(f"request args: {request.args}")
+            print(f"request json: {request.json}")
+
+        try:
+            json_data = request.json
+
+            # Just dump the whole form data to orders table for debugging
+            if DEBUG:
+                entity = {
+                    'PartitionKey': "DEBUG",
+                    'RowKey': str(json_data['no']),
+                    'data': json.dumps(json_data)
+                }
+                table_res = azure_table_op.update_entities(entity, table_name)
+
+            # Step 1: Confirm that the signature is valid
+
+            # First, pop the sign key from form data
+            sevenpay_sign = json_data.pop('sign')
+
+            # Second, generate our own signature to compare
+            our_sign = get_md5_hash_7pay(
+                json_data,
+                os.getenv('SEVENPAY_PKEY')
+            )
+            if DEBUG:
+                print(json_data)
+                print(our_sign)
+            if our_sign != sevenpay_sign:
+                return f"Invalid signature: {our_sign} vs {sevenpay_sign}"
+
+            # Step 2: Find the order and confirm that the data is correct
+            query_filter = f"PartitionKey ne @debug and RowKey eq @order_id"
+            select = None
+            parameters = {'debug': "DEBUG", 'order_id': str(json_data['no'])}
+
+            table_res = azure_table_op.query_entities(query_filter, select, parameters, table_name)
+            if table_res['status'] != 0:
+                return f"Failed to query orders: {table_res['message']}"
+
+            # Perform order data validation
+            if len(table_res['data']) <= 0:
+                return "Invalid order_id"
+            entity = table_res['data'][0]   # There should only be one order for the order_id
+            order_data = json.loads(entity['data'])
+            if DEBUG:
+                print(f"Order data: {order_data}")
+            for our_key, sevenpay_key in ORDER_VALIDATION_KEYS:
+                our_value, sevenpay_value = order_data[our_key], json_data[sevenpay_key]
+                if our_key == "fee" and sevenpay_key == "money":
+                    # Convert to float so they have the same number of decimals
+                    our_value = float(our_value)
+                    sevenpay_value = float(sevenpay_value)
+                if str(our_value) != str(sevenpay_value):
+                    return f"Mismatched key values: {our_key} ({our_value}) != {sevenpay_key} ({sevenpay_value})"
+
+            # Step 3: Return early success if status is already paid
+            if entity['status'] == "paid":
+                return "success"
+
+            # Step 4: Update the order status to paid and update table data
+            entity['status'] = "paid"
             table_res = azure_table_op.update_entities(entity, table_name)
+            if table_res['status'] != 0:
+                return f"Failed to update order: {table_res['message']}"
 
-        # Step 1: Confirm that the signature is valid
-
-        # First, pop the sign key from form data
-        sevenpay_sign = json_data.pop('sign')
-
-        # Second, generate our own signature to compare
-        our_sign = get_md5_hash_7pay(
-            json_data,
-            os.getenv('SEVENPAY_PKEY')
-        )
-        if DEBUG:
-            print(json_data)
-            print(our_sign)
-        if our_sign != sevenpay_sign:
-            return f"Invalid signature: {our_sign} vs {sevenpay_sign}"
-
-        # Step 2: Find the order and confirm that the data is correct
-        query_filter = f"PartitionKey ne @debug and RowKey eq @order_id"
-        select = None
-        parameters = {'debug': "DEBUG", 'order_id': str(json_data['no'])}
-
-        table_res = azure_table_op.query_entities(query_filter, select, parameters, table_name)
-        if table_res['status'] != 0:
-            return f"Failed to query orders: {table_res['message']}"
-
-        # Perform order data validation
-        if len(table_res['data']) <= 0:
-            return "Invalid order_id"
-        entity = table_res['data'][0]   # There should only be one order for the order_id
-        order_data = json.loads(entity['data'])
-        if DEBUG:
-            print(f"Order data: {order_data}")
-        for our_key, sevenpay_key in ORDER_VALIDATION_KEYS:
-            our_value, sevenpay_value = order_data[our_key], json_data[sevenpay_key]
-            if our_key == "fee" and sevenpay_key == "money":
-                # Convert to float so they have the same number of decimals
-                our_value = float(our_value)
-                sevenpay_value = float(sevenpay_value)
-            if str(our_value) != str(sevenpay_value):
-                return f"Mismatched key values: {our_key} ({our_value}) != {sevenpay_key} ({sevenpay_value})"
-
-        # Step 3: Return early success if status is already paid
-        if entity['status'] == "paid":
+            # Return success
             return "success"
-
-        # Step 4: Update the order status to paid and update table data
-        entity['status'] = "paid"
-        table_res = azure_table_op.update_entities(entity, table_name)
-        if table_res['status'] != 0:
-            return f"Failed to update order: {table_res['message']}"
-
-        # Return success
-        return "success"
-    except:
-        return f"Could not handle validation request: {traceback.format_exc()}"
+        except:
+            return f"Could not handle validation request: {traceback.format_exc()}"
 
 
 if __name__ == '__main__':
