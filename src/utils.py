@@ -142,17 +142,21 @@ def get_payment_QR(
     # Send payment request and get payment QR code from 7-pay API
     sign = get_md5_hash_7pay(order_info, os.getenv('SEVEN_PAY_PKEY'))
     order_info['sign'] = sign
+    if DEBUG:
+        print(order_info)
     for i in range(N_RETRIES):
         try:
             response = requests.request("POST", url, json=order_info, timeout=TIMEOUT)
             break
         except Exception as e:
             if i == N_RETRIES - 1:
-                return {'code': f"Payment request timed out: {e}"}
+                return {'code': "Failed", 'msg': f"Payment request timed out: {e}"}
             else:
                 time.sleep(COOLDOWN * BACKOFF ** i)
     if response.status_code != 200:
         return {'code': f"Payment request failed with code {response.status_code}: {response.text}"}
+    if DEBUG:
+        print(response.json())
     return response.json()
 
 
@@ -176,9 +180,7 @@ def get_md5_hash_7pay(
         data_str += f"{key}={data[key]}&"
     # Step 2: Append pkey to the end of the string but with a key 'key'
     data_str += f"key={pkey}"
-    # Step 3: Strip the string of all empty spaces
-    data_str = data_str.replace(" ", "")
-    # Step 4: Return the lowercase version of the calculated md5 hash of the string
+    # Step 3: Return the lowercase version of the calculated md5 hash of the string
     return hashlib.md5(data_str.encode('utf-8')).hexdigest().lower()
 
 
@@ -545,9 +547,12 @@ class User:
             return db_res
 
         # Step2: Award the user with new registration tokens
+        order_id, _ = generate_event_id()
         db_res = self.add_order(
             n_tokens=initial_token_amount,
-            order_info={},
+            order_info={
+                'no': order_id,
+            },
             order_status="paid",
             comments=f"[SYSTEM] Initial gift of {initial_token_amount} tokens."
         )
@@ -578,11 +583,11 @@ class User:
         comments: str = ""
     ) -> dict:
         # Generate a new order and save it in the table. The order can be open (pending payment) or paid (effective immediately)
-        row_key, timestamp = generate_event_id()
+        _, timestamp = generate_event_id()
 
         entity = {
             'PartitionKey': f"{self.channel}_{self.user_id}",
-            'RowKey': row_key,
+            'RowKey': str(order_info['no']),
             'timestamp': timestamp,
             'data': json.dumps(order_info),
             'tokens': n_tokens,

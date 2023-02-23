@@ -114,7 +114,7 @@ def handle_sevenpay_validation():
             if DEBUG:
                 entity = {
                     'PartitionKey': "DEBUG",
-                    'RowKey': form_data['no'],
+                    'RowKey': str(form_data['no']),
                     'data': json.dumps(form_data)
                 }
                 table_res = azure_table_op.update_entities(entity, table_name)
@@ -135,7 +135,7 @@ def handle_sevenpay_validation():
             # Step 2: Find the order and confirm that the data is correct
             query_filter = f"RowKey eq @order_id"
             select = None
-            parameters = {'order_id': form_data['order_id']}
+            parameters = {'order_id': str(form_data['no'])}
 
             table_res = azure_table_op.query_entities(query_filter, select, parameters, table_name)
             if table_res['status'] != 0:
@@ -147,7 +147,7 @@ def handle_sevenpay_validation():
             entity = json.loads(table_res['data'][0])    # There should only be one order for the order_id
             order_data = entity['data']
             for our_key, sevenpay_key in ORDER_VALIDATION_KEYS:
-                if order_data[our_key] != form_data[sevenpay_key]:
+                if str(order_data[our_key]) != str(form_data[sevenpay_key]):
                     return f"Mismatched key values: {our_key} ({order_data[our_key]}) != {sevenpay_key} ({form_data[sevenpay_key]})"
 
             # Step 3: Return early success if status is already paid

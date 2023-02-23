@@ -29,6 +29,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 # Check environment variables
 
+errors = []
 for key in [
     "OPENAI_API_KEY", "OPENAI_ORG_ID",  # For OpenAI APIs
     "AZURE_STORAGE_CONNECTION_STRING",  # For Table Storage
@@ -39,8 +40,10 @@ for key in [
     "PAYMENT_CALLBACK_ROUTE"            # Payment Gateway callback route
 ]:
     if key not in os.environ:
-        st.error(f"Please set the {key} environment variable.")
-        st.stop()
+        errors.append(f"Please set the {key} environment variable.")
+if len(errors) > 0:
+    st.error("\n".join(errors))
+    st.stop()
 
 
 ### FUNCTION DEFINITIONS ###
@@ -162,7 +165,7 @@ def update_sidebar() -> None:
         with col2:
             st.metric("**剩余聊天币**", f"{st.session_state.USER.n_tokens}枚")
 
-        cat_expander = st.expander("聊天币充值")
+        cat_expander = st.expander("💰 充值聊天币")
         with cat_expander:
             tabs = st.tabs(SET_NAMES)
             for i, (tab, set_name_short) in enumerate(zip(tabs, SET_NAMES)):
@@ -192,37 +195,45 @@ def update_sidebar() -> None:
             if var_name in vars() and vars()[var_name]:
                 set_name = f"{set_name_short}套餐"
                 row_key, timestamp = generate_event_id()
+                price = catalogue[set_name]['sale_price'] if catalogue[set_name]['sale_price'] else catalogue[set_name]['price']
+                remark = f"{catalogue[set_name]['amount']}{catalogue[set_name]['unit']}{catalogue[set_name]['product']}"
+                if DEBUG:
+                    price = 0.1
+                    remark += " (DEBUG PRICE)"
+                # Format requirements: http://7-pay.cn/doc.php#d2
                 order_info = {
-                    'body': set_name,
-                    'fee': catalogue[set_name]['sale_price'] if catalogue[set_name]['sale_price'] else catalogue[set_name]['price'],
+                    'body': str(set_name),
+                    'fee': f"{price:.2f}",
                     'pay_type': "alipay",
-                    'no': row_key,
+                    'no': int(row_key),
                     'notify_url': f"{payment_cfg['callback_endpoint']}{os.getenv('PAYMENT_CALLBACK_ROUTE')}",
                     'pid': os.getenv('SEVENPAY_PID'),
-                    'remark': f"{catalogue[set_name]['amount']}{catalogue[set_name]['unit']}{catalogue[set_name]['product']}"
+                    'remark':str(remark)
                 }
-                # First, add an open order to the database
-                action_res = st.session_state.USER.add_order(catalogue[set_name]['amount'], order_info)
-                if action_res['status'] != 0:
-                    st.error(f"生成订单失败：{action_res['msg']}")
-                    st.stop()
-                # Second send the order info to the payment gateway and request QR code
-                with st.spinner("支付码生成中..."):
-                    payment_res = get_payment_QR(
-                        payment_cfg['endpoint'],
-                        order_info
-                    )
-                if payment_res['code'] != "success":
-                    st.error(f"生成订单失败：{payment_res['code']}")
-                    st.stop()
+
                 with payment_code_placeholder.container():
-                    st.image(payment_res['img'])
-                    refresh = st.button("支付成功后点此按钮刷新页面", key=f"refresh_{len(st.session_state.LOG)}")
-                if refresh:
-                    st.experimental_rerun()
+                    refresh = False
+                    with st.spinner("订单生成中..."):
+                        # First, add an open order to the database
+                        action_res = st.session_state.USER.add_order(catalogue[set_name]['amount'], order_info)
+                        if action_res['status'] != 0:
+                            st.error(f"生成订单失败：{action_res['message']}")
+                    with st.spinner("支付码生成中..."):
+                        # Second, send the order info to the payment gateway and request QR code
+                        payment_res = get_payment_QR(
+                            payment_cfg['endpoint'],
+                            order_info
+                        )
+                        if payment_res['code'] != "success":
+                            st.error(f"生成支付码失败：{payment_res['msg']}")
+                    if payment_res['code'] == "success":
+                        st.image(payment_res['img'])
+                        refresh = st.button("支付成功后点此按钮刷新页面", key=f"refresh_{len(st.session_state.LOG)}")
+                    if refresh:
+                        st.experimental_rerun()
 
         # st.write("")
-        with st.expander("近10次登录记录"):
+        with st.expander("💻 近10次登录记录"):
             # Calculate and display user's IP history and time
             d = datetime.datetime.now()
             timestamp_now = calendar.timegm(d.timetuple())
@@ -233,7 +244,7 @@ def update_sidebar() -> None:
                 formatted_ip_history.append(f"{ip}, {humanize.naturaltime(datetime.timedelta(seconds=timestamp_now - timestamp))}")
             st.caption("<br>".join(formatted_ip_history), unsafe_allow_html=True)
 
-        with st.expander("充值记录"):
+        with st.expander("📒 充值记录"):
             d = datetime.datetime.now()
             timestamp_now = calendar.timegm(d.timetuple())
 
