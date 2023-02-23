@@ -109,35 +109,34 @@ def handle_sevenpay_validation():
 
     if request.method == "POST":
         if DEBUG:
-            logger.info(f"request data: {request.data}")
             logger.info(f"request form: {request.form}")
-            logger.info(f"request args: {request.args}")
-            logger.info(f"request json: {request.json}")
+            logger.info(f"request headers: {request.headers}")
 
         try:
-            json_data = request.json
+            form_data = request.form.to_dict()
+            logger.info(form_data)
 
             # Just dump the whole form data to orders table for debugging
             if DEBUG:
                 entity = {
                     'PartitionKey': "DEBUG",
-                    'RowKey': str(json_data['no']),
-                    'data': json.dumps(json_data)
+                    'RowKey': str(form_data['no']),
+                    'data': json.dumps(form_data)
                 }
                 table_res = azure_table_op.update_entities(entity, table_name)
 
             # Step 1: Confirm that the signature is valid
 
             # First, pop the sign key from form data
-            sevenpay_sign = json_data.pop('sign')
+            sevenpay_sign = form_data.pop('sign')
 
             # Second, generate our own signature to compare
             our_sign = get_md5_hash_7pay(
-                json_data,
+                form_data,
                 os.getenv('SEVENPAY_PKEY')
             )
             if DEBUG:
-                logger.info(json_data)
+                logger.info(form_data)
                 logger.info(our_sign)
             if our_sign != sevenpay_sign:
                 return f"Invalid signature: {our_sign} vs {sevenpay_sign}"
@@ -145,7 +144,7 @@ def handle_sevenpay_validation():
             # Step 2: Find the order and confirm that the data is correct
             query_filter = f"PartitionKey ne @debug and RowKey eq @order_id"
             select = None
-            parameters = {'debug': "DEBUG", 'order_id': str(json_data['no'])}
+            parameters = {'debug': "DEBUG", 'order_id': str(form_data['no'])}
 
             table_res = azure_table_op.query_entities(query_filter, select, parameters, table_name)
             if table_res['status'] != 0:
@@ -159,7 +158,7 @@ def handle_sevenpay_validation():
             if DEBUG:
                 logger.info(f"Order data: {order_data}")
             for our_key, sevenpay_key in ORDER_VALIDATION_KEYS:
-                our_value, sevenpay_value = order_data[our_key], json_data[sevenpay_key]
+                our_value, sevenpay_value = order_data[our_key], form_data[sevenpay_key]
                 if our_key == "fee" and sevenpay_key == "money":
                     # Convert to float so they have the same number of decimals
                     our_value = float(our_value)
