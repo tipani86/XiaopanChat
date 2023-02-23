@@ -1,28 +1,27 @@
 import os
-import re
-import math
 import time
 import json
 import base64
 import openai
 import qrcode
-import random
 import requests
 import datetime
 import calendar
 import humanize
-import traceback
 import subprocess
 import numpy as np
 from PIL import Image
 import streamlit as st
+from app_config import *
 from streamlit_modal import Modal
 import streamlit.components.v1 as components
-from utils import AzureTableOp, User
 from transformers import AutoTokenizer
 import azure.cognitiveservices.speech as speechsdk
+from concurrent.futures import ThreadPoolExecutor, wait
+from utils import AzureTableOp, User
+from utils import use_consumables, generate_event_id, warm_up_api_server, synthesize_text, detect_language, get_payment_QR
 
-DEBUG = True
+# Set global variables
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -30,96 +29,24 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 # Check environment variables
 
+errors = []
 for key in [
     "OPENAI_API_KEY", "OPENAI_ORG_ID",  # For OpenAI APIs
     "AZURE_STORAGE_CONNECTION_STRING",  # For Table Storage
     "AZURE_SPEECH_KEY",                 # For Azure Speech APIs
+    "RAPID_API_KEY",                    # For Rapid APIs
     "WX_LOGIN_SECRET",                  # WeChat Login
-    "SEVENPAY_PID", "SEVENPAY_PKEY"     # Payment Gateway
+    "SEVENPAY_PID", "SEVENPAY_PKEY",    # Payment Gateway
+    "PAYMENT_CALLBACK_ROUTE"            # Payment Gateway callback route
 ]:
     if key not in os.environ:
-        st.error(f"Please set the {key} environment variable.")
-        st.stop()
-
-# Set global variables
-
-_t = humanize.i18n.activate("zh_CN")    # Initialize humanize time output in Simplified Chinese
-
-DEMO_HISTORY_LIMIT = 10
-NEW_USER_FREE_TOKENS = 20
-FREE_TOKENS_PER_REFERRAL = 10
-
-SET_NAMES = ["小白", "进阶"]
-# SET_NAMES = ["小白", "进阶", "王者", "钻石"]
-
-TIMEOUT = 15
-N_RETRIES = 3
-COOLDOWN = 2
-BACKOFF = 1.5
-
-# Below are settings for OpenAI NLP models, not to be confused with user chat tokens above
-NLP_MODEL_NAME = "text-davinci-003"
-NLP_MODEL_MAX_TOKENS = 4000
-NLP_MODEL_REPLY_MAX_TOKENS = 1500
-NLP_MODEL_TEMPERATURE = 0.7
-NLP_MODEL_FREQUENCY_PENALTY = 1.0
-NLP_MODEL_PRESENCE_PENALTY = 1.0
-NLP_MODEL_STOP_WORDS = ["Human:", "AI:"]
-
-OUTPUT_OPTIONS = {
-    "text": "文本",
-    "text_audio": "文本+语音",
-}
+        errors.append(f"Please set the {key} environment variable.")
+if len(errors) > 0:
+    st.error("\n".join(errors))
+    st.stop()
 
 
-build_date = "unknown"
-if os.path.isfile("build_date.txt"):
-    with open("build_date.txt", "r") as f:
-        build_date = f.read()
-else:
-    try:
-        build_date = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD']).decode('ascii').strip()
-    except Exception as e:
-        print(f"Failed to get git commit hash: {e}")
-
-clear_input_script = """
-<script>
-    // Clear input value
-    const streamlitDoc = window.parent.document
-    // Find the target input element
-    const inputs = Array.from(streamlitDoc.getElementsByTagName('input'))
-    // Find all the inputs with aria-label '请输入:' and clear their value
-    for (let i = 0; i < inputs.length; i++) {
-        if (inputs[i].ariaLabel === '请输入:') {
-            inputs[i].value = ''
-        }
-    }
-    /*
-    const input = inputs.find(input => input.ariaLabel === '请输入:')
-        // Clear the input value if it has value or the value is other than ''
-        if (input.value || input.value !== '') {
-            input.value = ''
-        }
-    */
-</script>
-"""
-
-expand_sidebar_script = """
-<script>
-    // Expand the sidebar
-    const streamlitDoc = window.parent.document
-    const buttons = streamlitDoc.getElementsByClassName('css-9s5bis edgvbvh3')
-    // Normally there are three buttons (so we press the index 1),
-    // but on Streamlit hosted service there are five buttons, so we press index 3)
-    if (buttons.length === 3) {
-        buttons[1].click()
-    } else if (buttons.length === 5) {
-        buttons[3].click()
-    }
-</script>
-"""
-
-# Function definitions
+### FUNCTION DEFINITIONS ###
 
 
 @st.cache_resource(show_spinner=False)
@@ -180,35 +107,14 @@ def get_css() -> str:
         return f"<style>{f.read()}</style>"
 
 
-def generate_event_id() -> str:
-    # Generate event ID which is current timestamp + a 6-digit random number
-    d = datetime.datetime.now()
-    timestamp = calendar.timegm(d.timetuple())
-    return str(timestamp) + str(random.randint(100000, 999999)), timestamp
-
-
-def warm_up_api_server():
-    res = {'status': 0, 'msg': "Success"}
-    # Warm up Xiaopan API server with retry, backoff etc.
-    for i in range(N_RETRIES * 2):
-        try:
-            r = requests.get("https://xiaopan-chat-api.azurewebsites.net/", timeout=TIMEOUT)
-            if r.status_code == 200:
-                return res
-        except Exception as e:
-            time.sleep(COOLDOWN * BACKOFF ** i)
-    res['status'] = 2
-    res['msg'] = f"Failed to warm up API server!"
-    return res
-
-
 def get_chat_message(
     contents: str = "",
     align: str = "left"
 ) -> str:
+    # Formats the message in an chat fashion (user right, reply left)
     div_class = "AI-line"
     color = "rgb(240, 242, 246)"
-    file_path = os.path.join(ROOT_DIR, "src", "AI_icon.png")
+    file_path = os.path.join(ROOT_DIR, "src", "assets", "AI_icon.png")
     src = f"data:image/gif;base64,{get_local_img(file_path)}"
     if align == "right":
         div_class = "human-line"
@@ -216,7 +122,7 @@ def get_chat_message(
         if "USER" in st.session_state:
             src = st.session_state.USER.avatar_url
         else:
-            file_path = os.path.join(ROOT_DIR, "src", "user_icon.png")
+            file_path = os.path.join(ROOT_DIR, "src", "assets", "user_icon.png")
             src = f"data:image/gif;base64,{get_local_img(file_path)}"
     icon_code = f"<img class='chat-icon' src='{src}' width=32 height=32 alt='avatar'>"
     formatted_contents = f"""
@@ -259,7 +165,11 @@ def update_sidebar() -> None:
         with col2:
             st.metric("**剩余聊天币**", f"{st.session_state.USER.n_tokens}枚")
 
-        cat_expander = st.expander("聊天币充值")
+        refresh = st.button("刷新页面", key=f"refresh_{len(st.session_state.LOG)}")
+        if refresh:
+            st.experimental_rerun()
+
+        cat_expander = st.expander("💰 充值聊天币")
         with cat_expander:
             tabs = st.tabs(SET_NAMES)
             for i, (tab, set_name_short) in enumerate(zip(tabs, SET_NAMES)):
@@ -288,14 +198,45 @@ def update_sidebar() -> None:
             var_name = f"generate_payment{i+1}"
             if var_name in vars() and vars()[var_name]:
                 set_name = f"{set_name_short}套餐"
-                with payment_code_placeholder.container():
-                    st.write(f"**{set_name}** button pressed")
-                    refresh = st.button("支付成功后点此按钮刷新页面", key=f"refresh_{len(st.session_state.LOG)}")
-                if refresh:
-                    st.experimental_rerun()
+                row_key, timestamp = generate_event_id()
+                price = catalogue[set_name]['sale_price'] if catalogue[set_name]['sale_price'] else catalogue[set_name]['price']
+                remark = f"{catalogue[set_name]['amount']}{catalogue[set_name]['unit']}{catalogue[set_name]['product']}"
+                if DEBUG:
+                    price = 0.1
+                    remark += " (DEBUG PRICE)"
+                # Format requirements: http://7-pay.cn/doc.php#d2
+                order_info = {
+                    'body': str(set_name),
+                    'fee': round(price, 2),
+                    'pay_type': "alipay",
+                    'no': int(row_key),
+                    'notify_url': f"{payment_cfg['callback_endpoint']}{os.getenv('PAYMENT_CALLBACK_ROUTE')}",
+                    'pid': os.getenv('SEVENPAY_PID'),
+                    'remark': str(remark)
+                }
 
-        st.write("")
-        with st.expander("最近10次登录历史"):
+                with payment_code_placeholder.container():
+                    with st.spinner("订单生成中..."):
+                        # First, add an open order to the database
+                        action_res = st.session_state.USER.add_order(catalogue[set_name]['amount'], order_info)
+                        if action_res['status'] != 0:
+                            st.error(f"生成订单失败：{action_res['message']}")
+                    with st.spinner("支付码生成中..."):
+                        # Second, send the order info to the payment gateway and request QR code
+                        payment_res = get_payment_QR(
+                            payment_cfg['endpoint'],
+                            order_info
+                        )
+                        if payment_res['code'] != "success":
+                            st.error(f"生成支付码失败：{payment_res['msg']}")
+                    if payment_res['code'] == "success":
+                        alipay_logo_path = os.path.join(ROOT_DIR, "src", "assets", "120_348_alipay.png")
+                        st.image(f"data:image/gif;base64,{get_local_img(alipay_logo_path)}")
+                        st.image(payment_res['img'])
+                        st.caption(f"支付完成后请点击上方的刷新按钮，查看聊天币余额。")
+
+        # st.write("")
+        with st.expander("💻 近10次登录记录"):
             # Calculate and display user's IP history and time
             d = datetime.datetime.now()
             timestamp_now = calendar.timegm(d.timetuple())
@@ -305,6 +246,24 @@ def update_sidebar() -> None:
             for timestamp, ip in reversed(st.session_state.USER.ip_history):
                 formatted_ip_history.append(f"{ip}, {humanize.naturaltime(datetime.timedelta(seconds=timestamp_now - timestamp))}")
             st.caption("<br>".join(formatted_ip_history), unsafe_allow_html=True)
+
+        with st.expander("📒 充值记录"):
+            d = datetime.datetime.now()
+            timestamp_now = calendar.timegm(d.timetuple())
+
+            # We need to sort the transactions dataframe in reverse order and only show positive token values
+            transactions = st.session_state.USER.transactions.sort_values(by="eventtime", ascending=False)
+            transactions = transactions[transactions["tokens"] > 0]
+            formatted_transactions = []
+            for row in transactions.itertuples():
+                if "[SYSTEM]" in row.comments:
+                    message = f"[系统赠送] +{row.tokens}币"
+                else:
+                    message = f"充值 +{row.tokens}币"
+                formatted_transactions.append(f"{message}, {humanize.naturaltime(datetime.timedelta(seconds=timestamp_now - row.eventtime))}")
+            st.caption("<br>".join(formatted_transactions), unsafe_allow_html=True)
+
+        st.header("")
 
 
 def render_login_popup(
@@ -410,16 +369,15 @@ def render_login_popup(
                     user_id = entity['user_id']
                     user_data = json.loads(entity['data'])
                     user_data['timestamp'] = timestamp
-                    table_name = "users"
-                    if DEBUG:
-                        table_name += "Test"
 
                     # Build user object from temporary login data. The object is easier to manipulate later on.
                     st.session_state.USER = User(
                         channel="wx_user",
                         user_id=user_id,
                         db_op=table_op,
-                        table_name=table_name
+                        users_table=USERS_TABLE,
+                        orders_table=ORDERS_TABLE,
+                        tokenuse_table=TOKENUSE_TABLE
                     )
 
                     # Delete the temp entry from the table
@@ -446,13 +404,19 @@ def render_login_popup(
                             st.stop()
                         if "NEW_USER" not in st.session_state:
                             st.session_state.NEW_USER = True
+                    elif action_res['status'] != 0:
+                        login_popup.close()
+                        st.error(f"无法同步用户信息: {action_res['message']}")
+                        st.stop()
                     else:
-                        # Normal login, we update ip history from user_data
+                        # Normal login, we update current tokens amount and ip history from user_data
+                        st.session_state.USER.n_tokens = action_res['n_tokens']
                         action_res = st.session_state.USER.update_ip_history(user_data)
                         if action_res['status'] != 0:
                             login_popup.close()
                             st.error(f"无法更新IP地址: {action_res['message']}")
                             st.stop()
+                    login_popup.close()
 
 
 def generate_prompt_from_memory():
@@ -467,7 +431,7 @@ def generate_prompt_from_memory():
 
         # We write a new prompt asking the model to summarize this middle part
         summarizable_memory = summarizable_memory + [
-            "The above is the conversation so far between you, the AI assistant, and a human user. Please summarize the topics discussed. Remember, do not write a direct reply to the user."
+            "The above is the conversation so far between you, the AI assistant, and a human user. Please summarize the topics discussed for your own reference. Remember, do not write a direct reply to the user."
         ]
         summarizable_str = "\n".join(summarizable_memory)
         summarizable_tokens = tokenizer.tokenize(summarizable_str)
@@ -526,85 +490,16 @@ def generate_prompt_from_memory():
     return memory_str, tokens_used
 
 
-def synthesize_text(
-    text: str,
-    config: dict,
-    synthesizer,
-) -> None:
-    # Clean up the text so it doesn't contain weird tokens
-    CLEANR = re.compile('<.*?>|&([a-z0-9]+|#[0-9]{1,6}|#x[0-9a-f]{1,6});')
-    text = re.sub(CLEANR, '', text)
-    # Add speaking style if configured
-    if 'style' in config and config['style'] is not None:
-        ssml_string = f"""
-            <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="en-US">
-                <voice name="{config['voice'] if 'voice' in config else 'zh-CN-XiaoxiaoNeural'}">
-                <mstts:express-as style='{config['style']}'>
-                    <prosody rate="{config['rate'] if 'rate' in config else 1.0}" pitch="{config['pitch'] if 'pitch' in config else '0%'}">
-                        {text}
-                    </prosody>
-                </mstts:express-as>
-                </voice>
-            </speak>
-        """
-    else:
-        ssml_string = f"""
-            <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-US">
-                <voice name="{config['voice'] if 'voice' in config else 'zh-CN-XiaoxiaoNeural'}">
-                    <prosody rate="{config['rate'] if 'rate' in config else 1.0}" pitch="{config['pitch'] if 'pitch' in config else '0%'}">
-                        {text}
-                    </prosody>
-                </voice>
-            </speak>
-        """
-    result = synthesizer.speak_ssml_async(ssml_string).get()
-    if DEBUG:
-        print(result)
-    if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
-        length = result.audio_duration.total_seconds()
-        b64 = base64.b64encode(result.audio_data).decode()
-        # md = f"""
-        # <audio autoplay="true">
-        #     <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
-        # </audio>
-        # """
-        # st.markdown(
-        #     md,
-        #     unsafe_allow_html=True,
-        # )
-        components.html(f"""<script>window.parent.document.voicePlayer.src = "data:audio/mp3;base64,{b64}";</script>""", height=0, width=0)
-        return length
-    elif result.reason == speechsdk.ResultReason.Canceled:
-        cancellation_details = result.cancellation_details
-        print(f"Speech synthesis canceled: {cancellation_details.reason}")
-        if cancellation_details.reason == speechsdk.CancellationReason.Error:
-            print(f"Error details: {cancellation_details.error_details}")
-    return 0
+### INITIALIZE AND LOAD ###
 
 
-def use_consumables(
-    n_tokens: int = 1,
-    n_chars: int = 0,
-) -> dict:
-    # Add negative tokens to tokenUsage table under the user ID (or if not logged in, just under "unknown")
-    if "USER" in st.session_state:
-        partition_key = f"{st.session_state.USER.channel}_{st.session_state.USER.user_id}"
-    else:
-        partition_key = "unknown_user"
-    row_key, timestamp = generate_event_id()
-    entity = {
-        'PartitionKey': partition_key,
-        'RowKey': row_key,
-        'data': json.dumps({
-            'timestamp': timestamp,
-            'tokens': -n_tokens,
-            'chars': -n_chars,
-        })
-    }
-    table_name = "tokenuse"
-    if DEBUG:
-        table_name += "Test"
-    return azure_table_op.update_entities(entity, table_name)
+# Initialize page config
+favicon = get_favicon(os.path.join(ROOT_DIR, "src", "assets", "AI_icon.png"))
+st.set_page_config(
+    page_title="小潘AI",
+    page_icon=favicon,
+    initial_sidebar_state="collapsed",
+)
 
 
 # Load Azure Speech configuration and validate its data
@@ -615,12 +510,14 @@ for key in ["voice", "rate", "pitch"]:
         st.error(f"Key {key} not found in Azure Speech configuration file.")
         st.stop()
 
+
 # Load WeChat login configuration and validate its data
 wx_login_cfg_path = os.path.join(ROOT_DIR, "cfg", "wx_login.json")
 wx_login_cfg = get_json(wx_login_cfg_path)
 if 'endpoint' not in wx_login_cfg:
     st.error("WeChat login endpoint not found in configuration file.")
     st.stop()
+
 
 # Load product catalogue configuration and validate its data
 catalogue_path = os.path.join(ROOT_DIR, "cfg", "catalogue.json")
@@ -631,37 +528,59 @@ for set_name in catalogue:
             st.error(f"Set {set_name} is missing key {key} in catalogue configuration file.")
             st.stop()
 
-# OpenAI API settings
-openai.organization = os.getenv("OPENAI_ORG_ID")
-openai.api_key = os.getenv("OPENAI_API_KEY")
 
-# Initialize page config
-favicon = get_favicon(os.path.join(ROOT_DIR, "src", "AI_icon.png"))
-st.set_page_config(
-    page_title="小潘AI",
-    page_icon=favicon,
-    initial_sidebar_state="collapsed",
-)
+# Load payment gateway configuration and validate its data
+payment_cfg_path = os.path.join(ROOT_DIR, "cfg", "alipay_gateway.json")
+payment_cfg = get_json(payment_cfg_path)
+for key in ['endpoint', 'callback_endpoint']:
+    if key not in payment_cfg:
+        st.error(f"Key {key} not found in payment gateway configuration file.")
+        st.stop()
+
+
+# Initialize humanized time output in Simplified Chinese
+_t = humanize.i18n.activate("zh_CN")
+
 
 # Initialize some useful class instances
 with st.spinner("应用首次初始化中..."):
-    tokenizer = get_tokenizer()
-
+    tokenizer = get_tokenizer()  # First time after deployment takes a few seconds
 azure_table_op = get_table_op()
 azure_synthesizer = get_synthesizer(speech_cfg)
+openai.organization = os.getenv("OPENAI_ORG_ID")
+openai.api_key = os.getenv("OPENAI_API_KEY")
+EXECUTOR = ThreadPoolExecutor(2)
+
+if DEBUG:
+    for table_name_var in ["USERS_TABLE", "ORDERS_TABLE", "TOKENUSE_TABLE"]:
+        vars()[table_name_var] += "Test"
+
+
+build_date = "unknown"
+if os.path.isfile("build_date.txt"):
+    with open("build_date.txt", "r") as f:
+        build_date = f.read()
+else:
+    try:
+        build_date = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD']).decode('ascii').strip()
+    except Exception as e:
+        print(f"Failed to get git commit hash: {e}")
+
 
 # Warm-up the API server when the user accesses the site
 # (Azure tends to spin them down after some inactivity)
 if "WARM_UP" not in st.session_state or not st.session_state.WARM_UP:
     with st.spinner("小潘AI正在预热中..."):
-        warm_up_res = warm_up_api_server()
+        warm_up_res = warm_up_api_server(payment_cfg['callback_endpoint'])
 
     if warm_up_res['status'] != 0:
         st.error(f"小潘AI启动失败！{warm_up_res['msg']}")
         st.stop()
     st.session_state.WARM_UP = True
 
+
 ### MAIN STREAMLIT UI STARTS HERE ###
+
 
 # Define main layout
 header = st.empty()
@@ -673,23 +592,23 @@ st.write("")
 prompt_box = st.empty()
 footer = st.container()
 
+
 # Initialize sidebar placeholder
 with st.sidebar:
     sidebar = st.empty()
 
+
 # Initialize login popup
 login_popup = Modal(title=None, key="login_popup", padding=40, max_width=200)
+
 
 # Load CSS code
 st.markdown(get_css(), unsafe_allow_html=True)
 
+
 # Load JS code
 components.html(get_js(), height=0, width=0)
 
-# # Read browser query params and save them in session state
-# query_params = st.experimental_get_query_params()
-# if DEBUG:
-#     st.write(f"`Query params: {query_params}`")
 
 # Initialize/maintain a chat log and chat memory in Streamlit's session state
 # Log is the actual line by line chat, while memory is limited by model's maximum token context length
@@ -697,6 +616,7 @@ init_prompt = "You are an AI assistant called 小潘 (Xiaopan). You're very capa
 if "MEMORY" not in st.session_state:
     st.session_state.MEMORY = [init_prompt]
     st.session_state.LOG = [init_prompt]
+
 
 # Render header and sidebar depending on whether the user is logged in or not
 if "USER" not in st.session_state:
@@ -708,19 +628,27 @@ if "USER" not in st.session_state:
             if st.button("登录", key=f"login_button_{len(st.session_state.LOG)}"):
                 login_popup.open()
         with col2:
-            st.markdown(f"<small>免登录试用版，最多</small>`{DEMO_HISTORY_LIMIT}`<small>条消息的对话，登录后可获取更多聊天资格哦!</small>", unsafe_allow_html=True)
+            st.caption(f"<small>免登录试用版，登录后可以聊更多哦!</small>", unsafe_allow_html=True)
 else:
     # Sync user info from database and refresh the sidebar and header displays
-    st.session_state.USER.sync_from_db()
+    action_res = st.session_state.USER.sync_from_db()
+    if action_res['status'] != 0:
+        st.error(f"同步用户信息失败！{action_res['msg']}")
+        st.stop()
+    if action_res['n_tokens'] > st.session_state.USER.n_tokens:
+        st.balloons()
+    st.session_state.USER.n_tokens = action_res['n_tokens']
     with sidebar.container():
         update_sidebar()
     with header.container():
         update_header()
 
+
 # Render footer
 with footer:
-    st.info("免责声明：聊天机器人的输出基于用海量互联网文本数据训练的大型语言模型，仅供娱乐。对于信息的准确性、完整性、及时性等，小潘AI不承担任何责任。", icon="ℹ️")
+    st.info("免责声明：聊天机器人基于海量互联网文本训练的大型语言模型，仅供娱乐。小潘AI不对信息的准确性、完整性、及时性等承担任何保证或责任。", icon="ℹ️")
     st.markdown(f"<p style='text-align: right'><small><i><font color=gray>Build: {build_date}</font></i></small></p>", unsafe_allow_html=True)
+
 
 # Render the login popup with all the login logic included
 if login_popup.is_open():
@@ -781,7 +709,7 @@ if len(human_prompt) > 0:
 
         # This is one of those small three-dot animations to indicate the bot is "writing"
         writing_animation = st.empty()
-        file_path = os.path.join(ROOT_DIR, "src", "loading.gif")
+        file_path = os.path.join(ROOT_DIR, "src", "assets", "loading.gif")
         writing_animation.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;<img src='data:image/gif;base64,{get_local_img(file_path)}' width=30 height=10>", unsafe_allow_html=True)
 
         # Call the OpenAI API to generate a response with retry, cooldown and backoff
@@ -801,16 +729,49 @@ if len(human_prompt) > 0:
                 break
             except Exception as e:
                 if i == N_RETRIES - 1:
+                    reply_box.empty()
                     st.error(f"小潘AI出错了: {e}")
                     st.stop()
                 else:
                     time.sleep(COOLDOWN * BACKOFF ** i)
         NLP_tokens_used += len(reply_text)
-        # Synthesize the response and play it as audio
-        audio_play_time = synthesize_text(reply_text, speech_cfg, azure_synthesizer)
+        language_res = detect_language(reply_text)
+        if language_res['status'] != 0:
+            reply_box.empty()
+            st.error(f"识别语言失败: {language_res['msg']}")
+            st.stop()
+        if DEBUG:
+            print(f"Language detection result: {language_res['data']}")
+        if 'zh-cn' in language_res['data']:
+            # Synthesize the response and play it as audio
+            audio_play_time, b64 = synthesize_text(reply_text, speech_cfg, azure_synthesizer, speechsdk)
+            chars = len(reply_text)
+            if audio_play_time > 0 and len(b64) > 0:
+                # This part works in conjunction with the initialized script.js and puts the audio data into the audio player
+                components.html(f"""<script>window.parent.document.voicePlayer.src = "data:audio/mp3;base64,{b64}";</script>""", height=0, width=0)
+        else:
+            audio_play_time, chars = 0, 0
+
+        # Start executing the consumption job in a separate thread
+        if "USER" in st.session_state:
+            partition_key = f"{st.session_state.USER.channel}_{st.session_state.USER.user_id}"
+        else:
+            partition_key = "unknown_user"
+        consumption_task = EXECUTOR.submit(
+            use_consumables,
+            azure_table_op,
+            TOKENUSE_TABLE,
+            partition_key,
+            1,  # Chat tokens used
+            NLP_tokens_used,
+            chars
+        )
+
         # Loop so that reply_text gets revealed one character at a time
-        chars = len(reply_text)
-        pause_per_char = 0.7 * audio_play_time / chars  # 0.8 because we want the text to appear a bit faster than the audio
+        if chars > 0:
+            pause_per_char = 0.7 * audio_play_time / chars  # 0.7 because we want the text to appear a bit faster than the audio
+        else:
+            pause_per_char = 0.1
         tic = time.time()
         for i in range(chars):
             with reply_box.container():
@@ -820,34 +781,33 @@ if len(human_prompt) > 0:
         # Pause for the remaining time, if any
         time.sleep(max(0, audio_play_time - (toc - tic)))
 
+        # Wait for the consumption job to finish
+        consumption_task_res = wait([consumption_task], timeout=TIMEOUT)
+        if len(consumption_task_res.not_done) > 0:
+            reply_box.empty()
+            st.error(f"无法消费聊天币: 超时")
+            st.stop()
+
+        for task_res in consumption_task_res.done:
+            action_res = task_res.result()
+
         # Clear the audio stream from voicePlayer
         components.html(f"""<script>window.parent.document.voicePlayer.src = "";</script>""", height=0, width=0)
 
         # Clear the writing animation
         writing_animation.empty()
 
+        if action_res['status'] != 0:
+            reply_box.empty()
+            st.error(f"无法消费聊天币: {action_res['message']}")
+            st.stop()
+
         # Update the chat LOG and memories with the actual response
         st.session_state.LOG[-1] += reply_text
         st.session_state.MEMORY[-1] += reply_text
 
-        # Use consumables
-        use_consumables(NLP_tokens_used, chars)
-
-        # To deprecate
-        if "USER" in st.session_state:
-            action_res = st.session_state.USER.consume_token()
-            if action_res['status'] != 0:
-                st.error(f"无法消费聊天币: {action_res['message']}")
-                st.stop()
-
-            # Update the sidebar and header token number
-            with sidebar.container():
-                update_sidebar()
-            with header.container():
-                update_header()
-
-        elif len(st.session_state.LOG) > DEMO_HISTORY_LIMIT:
-            st.warning(f"**公测版，限{DEMO_HISTORY_LIMIT}条消息的对话**\n\n感谢您对我们的兴趣，想获取更多消息次数可以登录哦！")
+        if "USER" not in st.session_state and len(st.session_state.LOG) > DEMO_HISTORY_LIMIT * 2:
+            st.warning(f"**公测版，限{DEMO_HISTORY_LIMIT}次对话轮回**\n\n感谢您对小潘AI的兴趣。若想继续聊天，请在页面顶部进行登录！")
             prompt_box.empty()
             st.stop()
 
