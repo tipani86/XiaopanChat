@@ -564,7 +564,8 @@ class User:
 
     def use_consumables(
         self,
-        n_tokens: int = 1,
+        chat_tokens: int = 1,
+        n_tokens: int = 0,
         n_chars: int = 0,
         comments: str = ""
     ) -> dict:
@@ -573,6 +574,7 @@ class User:
             db_op=self.db_op,
             table_name=self.tokenuse_table,
             partition_key=f"{self.channel}_{self.user_id}",
+            chat_tokens=chat_tokens,
             n_tokens=n_tokens,
             n_chars=n_chars,
             comments=comments
