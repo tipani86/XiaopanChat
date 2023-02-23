@@ -100,11 +100,15 @@ def handle_wx_login():
     return jsonify(res)
 
 
-@app.route(os.getenv('PAYMENT_CALLBACK_ROUTE'), methods=['POST', 'GET'])
+@app.route(os.getenv('PAYMENT_CALLBACK_ROUTE'), methods=['POST'])
 def handle_sevenpay_validation():
     table_name = "orders"
     if DEBUG:
         table_name += "Test"
+
+    print(request.headers)
+    print(request.text)
+    print(request.json)
 
     try:
         json_data = request.json
