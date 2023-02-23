@@ -430,9 +430,7 @@ def generate_prompt_from_memory():
         summarizable_memory = st.session_state.MEMORY[1:-3]
 
         # We write a new prompt asking the model to summarize this middle part
-        summarizable_memory = summarizable_memory + [
-            "The above is the conversation so far between you, the AI assistant, and a human user. Please summarize the topics discussed for your own reference. Remember, do not write a direct reply to the user."
-        ]
+        summarizable_memory += [PRE_SUMMARY_PROMPT]
         summarizable_str = "\n".join(summarizable_memory)
         summarizable_tokens = tokenizer.tokenize(summarizable_str)
         tokens_used += len(summarizable_tokens)
@@ -465,11 +463,7 @@ def generate_prompt_from_memory():
                 # Re-build memory so it consists of the original prompt, a note that a summary follows,
                 # the actual summary, a second note that the last two conversation items follow,
                 # then the last three items from the original memory
-                new_memory = st.session_state.MEMORY[:1] + [
-                    "Before the actual log, here's a summary of the conversation so far:"
-                ] + [summary_text] + [
-                    "The summary ends. And here are the last two messages from the conversation before your reply:"
-                ] + st.session_state.MEMORY[-3:]
+                new_memory = st.session_state.MEMORY[:1] + [PRE_SUMMARY_NOTE] + [summary_text] + [POST_SUMMARY_NOTE] + st.session_state.MEMORY[-3:]
 
                 st.session_state.MEMORY = new_memory
 
@@ -612,10 +606,9 @@ components.html(get_js(), height=0, width=0)
 
 # Initialize/maintain a chat log and chat memory in Streamlit's session state
 # Log is the actual line by line chat, while memory is limited by model's maximum token context length
-init_prompt = "You are an AI assistant called 小潘 (Xiaopan). You're very capable, able answer various messages from a human user and provide helpful replies. You can add HTML your responses, for example when asked to list something. You have no language preferences, and will always reply in the same language that the human writes. Below is the chat log between you and the human:"
 if "MEMORY" not in st.session_state:
-    st.session_state.MEMORY = [init_prompt]
-    st.session_state.LOG = [init_prompt]
+    st.session_state.MEMORY = [INITIAL_PROMPT]
+    st.session_state.LOG = [INITIAL_PROMPT]
 
 
 # Render header and sidebar depending on whether the user is logged in or not
