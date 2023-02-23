@@ -773,7 +773,7 @@ if len(human_prompt) > 0:
         else:
             pause_per_char = 0.1
         tic = time.time()
-        for i in range(chars):
+        for i in range(len(reply_text)):
             with reply_box.container():
                 st.markdown(get_chat_message(reply_text[:i+1]), unsafe_allow_html=True)
                 time.sleep(pause_per_char)
