@@ -208,7 +208,7 @@ def update_sidebar() -> None:
                     'no': int(row_key),
                     'notify_url': f"{payment_cfg['callback_endpoint']}{os.getenv('PAYMENT_CALLBACK_ROUTE')}",
                     'pid': os.getenv('SEVENPAY_PID'),
-                    'remark':str(remark)
+                    'remark': str(remark)
                 }
 
                 with payment_code_placeholder.container():

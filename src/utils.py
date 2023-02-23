@@ -146,7 +146,7 @@ def get_payment_QR(
         print(order_info)
     for i in range(N_RETRIES):
         try:
-            response = requests.request("POST", url, json=order_info, timeout=TIMEOUT)
+            response = requests.post(url, json=order_info, timeout=TIMEOUT)
             break
         except Exception as e:
             if i == N_RETRIES - 1:
