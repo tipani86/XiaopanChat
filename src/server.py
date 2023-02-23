@@ -1,6 +1,7 @@
 import os
 import json
 import traceback
+from loguru import logger
 from flask import Flask, request, jsonify
 from utils import AzureTableOp, get_md5_hash_7pay
 from app_config import DEBUG, ORDER_VALIDATION_KEYS
@@ -108,10 +109,10 @@ def handle_sevenpay_validation():
 
     if request.method == "POST":
         if DEBUG:
-            print(f"request data: {request.data}")
-            print(f"request form: {request.form}")
-            print(f"request args: {request.args}")
-            print(f"request json: {request.json}")
+            logger.info(f"request data: {request.data}")
+            logger.info(f"request form: {request.form}")
+            logger.info(f"request args: {request.args}")
+            logger.info(f"request json: {request.json}")
 
         try:
             json_data = request.json
@@ -136,8 +137,8 @@ def handle_sevenpay_validation():
                 os.getenv('SEVENPAY_PKEY')
             )
             if DEBUG:
-                print(json_data)
-                print(our_sign)
+                logger.info(json_data)
+                logger.info(our_sign)
             if our_sign != sevenpay_sign:
                 return f"Invalid signature: {our_sign} vs {sevenpay_sign}"
 
@@ -156,7 +157,7 @@ def handle_sevenpay_validation():
             entity = table_res['data'][0]   # There should only be one order for the order_id
             order_data = json.loads(entity['data'])
             if DEBUG:
-                print(f"Order data: {order_data}")
+                logger.info(f"Order data: {order_data}")
             for our_key, sevenpay_key in ORDER_VALIDATION_KEYS:
                 our_value, sevenpay_value = order_data[our_key], json_data[sevenpay_key]
                 if our_key == "fee" and sevenpay_key == "money":

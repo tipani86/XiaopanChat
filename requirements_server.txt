@@ -1,4 +1,5 @@
 flask
 pandas
+loguru
 azure-core
 azure-data-tables
