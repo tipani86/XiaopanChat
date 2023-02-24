@@ -377,7 +377,7 @@ def render_login_popup(
                         db_op=table_op,
                         users_table=USERS_TABLE,
                         orders_table=ORDERS_TABLE,
-                        tokenuse_table=TOKENUSE_TABLE
+                        consumption_table=CONSUMPTION_TABLE
                     )
 
                     # Delete the temp entry from the table
@@ -538,7 +538,7 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 EXECUTOR = ThreadPoolExecutor(2)
 
 if DEBUG:
-    for table_name_var in ["USERS_TABLE", "ORDERS_TABLE", "TOKENUSE_TABLE"]:
+    for table_name_var in ["USERS_TABLE", "ORDERS_TABLE", "CONSUMPTION_TABLE"]:
         vars()[table_name_var] += "Test"
 
 
@@ -755,7 +755,7 @@ if len(human_prompt) > 0:
         consumption_task = EXECUTOR.submit(
             use_consumables,
             azure_table_op,
-            TOKENUSE_TABLE,
+            CONSUMPTION_TABLE,
             partition_key,
             1,  # Chat tokens used
             NLP_tokens_used,
