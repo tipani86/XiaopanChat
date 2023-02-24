@@ -16,5 +16,19 @@
 })(window, document, 'dataLayer', '84ddea31-5408-4d83-a6fe-ffe81f25b029');
 
 const streamlitDoc = window.parent.document
-const buttons = streamlitDoc.getElementsByClassName('css-9s5bis edgvbvh3')
-console.log(buttons)
+
+// Audio autoplay block override on mobile browsers (general idea from https://stackoverflow.com/questions/13266474/autoplay-audio-on-mobile-safari)
+
+streamlitDoc.voicePlayer = document.getElementById('voicePlayer')
+// streamlitDoc.addEventListener('click', () => {
+//     streamlitDoc.voicePlayer.load()
+//     // Remove event listener after first click
+//     streamlitDoc.removeEventListener('click', () => {})
+// })
+streamlitDoc.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') {
+        streamlitDoc.voicePlayer.load()
+        // Remove event listener after first keydown
+        streamlitDoc.removeEventListener('keydown', function(e) {})
+    }
+})

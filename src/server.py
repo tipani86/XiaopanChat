@@ -1,10 +1,11 @@
 import os
 import json
 import traceback
+from loguru import logger
 from flask import Flask, request, jsonify
-from utils import AzureTableOp
+from utils import AzureTableOp, get_md5_hash_7pay
+from app_config import DEBUG, ORDER_VALIDATION_KEYS
 
-DEBUG = True
 
 errors = []
 for key in [
@@ -61,7 +62,7 @@ def handle_wx_login():
             # Step 1: First check if the temp_user_id exists in the tempUserIds table
             table_name = "tempUserIds"
             if DEBUG:
-                table_name = table_name + "Test"
+                table_name += "Test"
 
             query_filter = f"PartitionKey eq @channel and RowKey eq @temp_user_id"
             select = None
@@ -102,8 +103,86 @@ def handle_wx_login():
 
 @app.route(os.getenv('PAYMENT_CALLBACK_ROUTE'), methods=['POST'])
 def handle_sevenpay_validation():
-    # TODO Integrate 7-pay API
-    pass
+    table_name = "orders"
+    if DEBUG:
+        table_name += "Test"
+
+    if request.method == "POST":
+        if DEBUG:
+            logger.info(f"request form: {request.form}")
+            logger.info(f"request headers: {request.headers}")
+
+        try:
+            form_data = request.form.to_dict()
+            if len(form_data) <= 0:
+                return "Invalid request: form data is empty"
+            json_data = json.loads(list(form_data.keys())[0])
+            logger.info(json_data)
+
+            # Just dump the whole form data to orders table for debugging
+            if DEBUG:
+                entity = {
+                    'PartitionKey': "DEBUG",
+                    'RowKey': str(json_data['no']),
+                    'data': json.dumps(json_data)
+                }
+                table_res = azure_table_op.update_entities(entity, table_name)
+
+            # Step 1: Confirm that the signature is valid
+
+            # First, pop the sign key from form data
+            sevenpay_sign = json_data.pop('sign')
+
+            # Second, generate our own signature to compare
+            our_sign = get_md5_hash_7pay(
+                json_data,
+                os.getenv('SEVENPAY_PKEY')
+            )
+            if DEBUG:
+                logger.info(json_data)
+                logger.info(our_sign)
+            if our_sign != sevenpay_sign:
+                return f"Invalid signature: {our_sign} vs {sevenpay_sign}"
+
+            # Step 2: Find the order and confirm that the data is correct
+            query_filter = f"PartitionKey ne @debug and RowKey eq @order_id"
+            select = None
+            parameters = {'debug': "DEBUG", 'order_id': str(json_data['no'])}
+
+            table_res = azure_table_op.query_entities(query_filter, select, parameters, table_name)
+            if table_res['status'] != 0:
+                return f"Failed to query orders: {table_res['message']}"
+
+            # Perform order data validation
+            if len(table_res['data']) <= 0:
+                return "Invalid order_id"
+            entity = table_res['data'][0]   # There should only be one order for the order_id
+            order_data = json.loads(entity['data'])
+            if DEBUG:
+                logger.info(f"Order data: {order_data}")
+            for our_key, sevenpay_key in ORDER_VALIDATION_KEYS:
+                our_value, sevenpay_value = order_data[our_key], json_data[sevenpay_key]
+                if our_key == "fee" and sevenpay_key == "money":
+                    # Convert to float so they have the same number of decimals
+                    our_value = float(our_value)
+                    sevenpay_value = float(sevenpay_value)
+                if str(our_value) != str(sevenpay_value):
+                    return f"Mismatched key values: {our_key} ({our_value}) != {sevenpay_key} ({sevenpay_value})"
+
+            # Step 3: Return early success if status is already paid
+            if entity['status'] == "paid":
+                return "success"
+
+            # Step 4: Update the order status to paid and update table data
+            entity['status'] = "paid"
+            table_res = azure_table_op.update_entities(entity, table_name)
+            if table_res['status'] != 0:
+                return f"Failed to update order: {table_res['message']}"
+
+            # Return success
+            return "success"
+        except:
+            return f"Could not handle validation request: {traceback.format_exc()}"
 
 
 if __name__ == '__main__':

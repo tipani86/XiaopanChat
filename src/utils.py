@@ -1,32 +1,193 @@
 import os
+import re
 import time
 import json
 import zlib
+import base64
+import random
 import hashlib
+import requests
+import datetime
+import calendar
 import traceback
+import pandas as pd
+from concurrent.futures import ThreadPoolExecutor, wait
 from azure.data.tables import TableClient, UpdateMode
 from azure.core.exceptions import ResourceExistsError, HttpResponseError, ResourceNotFoundError
+from app_config import DEBUG, TIMEOUT, N_RETRIES, COOLDOWN, BACKOFF
+
+
+def warm_up_api_server(url):
+    res = {'status': 0, 'msg': "Success"}
+    # Warm up Xiaopan API server with retry, backoff etc.
+    for i in range(N_RETRIES * 2):
+        try:
+            r = requests.get(url, timeout=TIMEOUT)
+            if r.status_code == 200:
+                return res
+        except Exception as e:
+            time.sleep(COOLDOWN * BACKOFF ** i)
+    res['status'] = 2
+    res['msg'] = f"Failed to warm up API server!"
+    return res
+
+
+def use_consumables(
+    db_op,
+    table_name: str,
+    partition_key: str = "unknown_user",
+    chat_tokens: int = 1,
+    nlp_tokens: int = 0,
+    n_chars: int = 0,
+    comments: str = ""
+) -> dict:
+    # Add negative tokens and synthesized characters info to consumption table under the user ID (or if not logged in, just under "unknown_user")
+    row_key, timestamp = generate_event_id()
+    entity = {
+        'PartitionKey': partition_key,
+        'RowKey': row_key,
+        'eventtime': timestamp,
+        'tokens': -chat_tokens,
+        'nlptokens': -nlp_tokens,
+        'chars': -n_chars,
+        'comments': comments
+    }
+    return db_op.update_entities(entity, table_name)
+
+
+def detect_language(text: str) -> dict:
+    # Detect language of the text using a call to Rapid API with retry logic
+    res = {'status': 0, 'msg': 'success', 'data': None}
+
+    url = "https://community-language-detection.p.rapidapi.com/detect"
+    payload = {'q': text}
+    headers = {
+        'content-type': "application/json",
+        'X-RapidAPI-Key': f"{os.getenv('RAPID_API_KEY')}",
+        'X-RapidAPI-Host': "community-language-detection.p.rapidapi.com"
+    }
+    for i in range(N_RETRIES):
+        try:
+            response = requests.request("POST", url, json=payload, headers=headers, timeout=TIMEOUT)
+            break
+        except Exception as e:
+            if i == N_RETRIES - 1:
+                res['status'] = 1
+                res['msg'] = f"Timeout error: {e}"
+                return res
+            else:
+                time.sleep(COOLDOWN * BACKOFF ** i)
+    if response.status_code != 200:
+        res['status'] = 2
+        res['msg'] = f"{response.status_code}: {response.text}"
+        return res
+    resp = response.json()
+    if 'data' not in resp or 'detections' not in resp['data']:
+        res['status'] = 2
+        res['msg'] = f"No detections in response: {resp}"
+        return res
+    res['data'] = resp['data']['detections']
+    return res
+
+
+def synthesize_text(
+    text: str,
+    config: dict,
+    synthesizer,
+    speechsdk
+) -> tuple:
+    # Clean up the text so it doesn't contain weird tokens
+    CLEANR = re.compile('<.*?>|&([a-z0-9]+|#[0-9]{1,6}|#x[0-9a-f]{1,6});')
+    text = re.sub(CLEANR, '', text)
+    # Add speaking style if configured
+    if 'style' in config and config['style'] is not None:
+        ssml_string = f"""
+            <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="en-US">
+                <voice name="{config['voice'] if 'voice' in config else 'zh-CN-XiaoxiaoNeural'}">
+                <mstts:express-as style='{config['style']}'>
+                    <prosody rate="{config['rate'] if 'rate' in config else 1.0}" pitch="{config['pitch'] if 'pitch' in config else '0%'}">
+                        {text}
+                    </prosody>
+                </mstts:express-as>
+                </voice>
+            </speak>
+        """
+    else:
+        ssml_string = f"""
+            <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-US">
+                <voice name="{config['voice'] if 'voice' in config else 'zh-CN-XiaoxiaoNeural'}">
+                    <prosody rate="{config['rate'] if 'rate' in config else 1.0}" pitch="{config['pitch'] if 'pitch' in config else '0%'}">
+                        {text}
+                    </prosody>
+                </voice>
+            </speak>
+        """
+    result = synthesizer.speak_ssml_async(ssml_string).get()
+    if DEBUG:
+        print(result)
+    if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
+        length = result.audio_duration.total_seconds()
+        b64 = base64.b64encode(result.audio_data).decode()
+        return length, b64
+    elif result.reason == speechsdk.ResultReason.Canceled:
+        cancellation_details = result.cancellation_details
+        print(f"Speech synthesis canceled: {cancellation_details.reason}")
+        if cancellation_details.reason == speechsdk.CancellationReason.Error:
+            print(f"Error details: {cancellation_details.error_details}")
+    return 0, ""
+
+
+def get_payment_QR(
+    url: str,
+    order_info: dict
+) -> dict:
+    # Send payment request and get payment QR code from 7-pay API
+    sign = get_md5_hash_7pay(order_info, os.getenv('SEVENPAY_PKEY'))
+    if DEBUG:
+        print(order_info)
+    query_str = "&".join([f"{k}={v}" for k, v in order_info.items()])
+    query_str += f"&sign={sign}"
+    if DEBUG:
+        print(query_str)
+    for i in range(N_RETRIES):
+        try:
+            response = requests.get(f"{url}?{query_str}", timeout=TIMEOUT)
+            break
+        except Exception as e:
+            if i == N_RETRIES - 1:
+                return {'code': "Failed", 'msg': f"Payment request timed out: {e}"}
+            else:
+                time.sleep(COOLDOWN * BACKOFF ** i)
+    if response.status_code != 200:
+        return {'code': f"Payment request failed with code {response.status_code}: {response.text}"}
+    if DEBUG:
+        print(response.json())
+    return response.json()
+
+
+def generate_event_id() -> tuple:
+    # Generate event ID which is current timestamp + a 6-digit random number
+    d = datetime.datetime.now()
+    timestamp = calendar.timegm(d.timetuple())
+    return str(timestamp) + str(random.randint(100000, 999999)), timestamp
 
 
 def get_md5_hash_7pay(
     data: dict,
-    pid: str,
     pkey: str,
 ) -> str:
     # Get md5 hash of input data based on 7-pay documentation
     # (Ref: http://7-pay.cn/doc.php#d6)
 
-    # Step 1: Insert pid as one key-value pair into data
-    data['pid'] = pid
-    # Step 2: Build a string with all key-value pairs in data sorted alphabetically by key
+    # Step 1: Build a string with all key-value pairs in data sorted alphabetically by key
     data_str = ""
     for key in sorted(data.keys()):
         data_str += f"{key}={data[key]}&"
-    # Step 3: Append pkey to the end of the string but with a key 'key'
+    # Step 2: Append pkey to the end of the string but with a key 'key'
     data_str += f"key={pkey}"
-    # Step 4: Strip the string of all empty spaces
-    data_str = data_str.replace(" ", "")
-    # Step 5: Return the lowercase version of the calculated md5 hash of the string
+    if DEBUG:
+        print(data_str)
+    # Step 3: Return the lowercase version of the calculated md5 hash of the string
     return hashlib.md5(data_str.encode('utf-8')).hexdigest().lower()
 
 
@@ -255,22 +416,64 @@ class User:
         channel: str,
         user_id: str,
         db_op,
-        table_name: str = "users"
+        users_table: str = "users",
+        orders_table: str = "orders",
+        consumption_table: str = "tokenUse"
     ) -> None:
 
         # Initialize the basic info
         self.channel = channel
         self.user_id = user_id
         self.db_op = db_op
-        self.table_name = table_name
+        self.users_table = users_table
+        self.orders_table = orders_table
+        self.consumption_table = consumption_table
+        self.transactions = None
+        self.n_tokens = 0
+        self.executor = ThreadPoolExecutor(3)
 
     def sync_from_db(self) -> dict:
-        res = {'status': 0, 'message': "Success"}
-        # Fetch the remaining info from database
+        res = {'status': 0, 'message': "Success", 'n_tokens': 0}
+        # Fetch the remaining user, orders and consumption table data with parallelism
+
+        # Submit user search
         query_filter = f"PartitionKey eq @channel and RowKey eq @user_id"
         select = None
         parameters = {'channel': self.channel, 'user_id': self.user_id}
-        db_res = self.db_op.query_entities(query_filter, select, parameters, self.table_name)
+        # db_res = self.db_op.query_entities(query_filter, select, parameters, self.users_table)
+        users_task = self.executor.submit(
+            self.db_op.query_entities,
+            query_filter, select, parameters, self.users_table
+        )
+
+        # Submit orders and consumption search (they share the same select but slightly different
+        # parameters: we only want to see the orders which are "paid" because those are real)
+        select = ["eventtime", "tokens", "comments"]
+
+        query_filter = f"PartitionKey eq @key and status eq @status"
+        parameters = {'key': f"{self.channel}_{self.user_id}", 'status': "paid"}
+        orders_task = self.executor.submit(
+            self.db_op.query_entities,
+            query_filter, select, parameters, self.orders_table
+        )
+
+        query_filter = f"PartitionKey eq @key"
+        parameters = {'key': f"{self.channel}_{self.user_id}"}
+        consumption_task = self.executor.submit(
+            self.db_op.query_entities,
+            query_filter, select, parameters, self.consumption_table
+        )
+
+        # Wait on the user search result first because it's needed to determine if we go any further
+        users_task_res = wait([users_task], timeout=TIMEOUT)
+        if len(users_task_res.not_done) > 0:
+            res['status'] = 1
+            res['message'] = f"Users data fetching timed out after {TIMEOUT} seconds."
+            return res
+
+        for task_res in users_task_res.done:
+            db_res = task_res.result()
+            break   # There should only be one result anyway
         if db_res['status'] != 0:
             return db_res
         if len(db_res['data']) <= 0:
@@ -284,56 +487,119 @@ class User:
         else:
             # Load rest of the info
             entity = db_res['data'][0]
-            self.n_tokens = entity['n_tokens']
             self.nickname = entity['nickname']
             self.avatar_url = entity['avatar_url']
             self.ip_history = json.loads(entity['ip_history'])
+
+            # Count the available tokens from orders and usage data
+            tokens_task_res = wait([orders_task, consumption_task], timeout=TIMEOUT)
+            if len(tokens_task_res.not_done) > 0:
+                res['status'] = 1
+                res['message'] = f"Orders and/or consumption data fetching timed out after {TIMEOUT} seconds."
+                return res
+
+            transactions = []
+            for task_res in tokens_task_res.done:
+                if task_res.result()['status'] != 0:
+                    res['status'] = task_res.result()['status']
+                    res['message'] = task_res.result()['message']
+                    return res
+                transactions.extend(task_res.result()['data'])
+            self.transactions = pd.DataFrame(transactions)
+            if DEBUG:
+                print(self.transactions)
+            # Sum up all the tokens to arrive at the current balance
+            if len(self.transactions) <= 0:
+                tokens = 0
+            else:
+                tokens = self.transactions['tokens'].sum()
+
+            # Update the user's most up-to-date token balance into res
+            res['n_tokens'] = tokens
+
         return res
 
     def sync_to_db(self) -> dict:
         entity = {
             "PartitionKey": self.channel,
             "RowKey": self.user_id,
-            "n_tokens": self.n_tokens,
             'nickname': self.nickname,
             'avatar_url': self.avatar_url,
             'ip_history': json.dumps(self.ip_history),
         }
-        return self.db_op.update_entities(entity, self.table_name)
+        return self.db_op.update_entities(entity, self.users_table)
 
     def initialize_on_db(
         self,
         user_data: dict,
-        initial_token_amount: int
+        initial_token_amount: int,
     ) -> dict:
 
         entity = {
             "PartitionKey": self.channel,
             "RowKey": self.user_id,
-            "n_tokens": initial_token_amount,
             'nickname': self.user_id[:10] if len(user_data['nickname']) <= 0 else user_data['nickname'],
             'avatar_url': user_data['avatar_url'],
             'ip_history': json.dumps(
                 [(user_data['timestamp'], user_data['ip_address'])]
             )
         }
-
-        db_res = self.db_op.update_entities(entity, self.table_name)
+        # Step 1: Create the user
+        db_res = self.db_op.update_entities(entity, self.users_table)
         if db_res['status'] != 0:
             return db_res
+
+        # Step2: Award the user with new registration tokens
+        order_id, _ = generate_event_id()
+        db_res = self.add_order(
+            n_tokens=initial_token_amount,
+            order_info={
+                'no': order_id,
+            },
+            order_status="paid",
+            comments=f"[SYSTEM] Initial gift of {initial_token_amount} tokens."
+        )
+
         return self.sync_from_db()
 
-    def consume_token(self) -> dict:
-        res = {'status': 0, 'message': "Success"}
-        api_res = self.sync_from_db()
-        if api_res['status'] != 0:
-            return api_res
-        if self.n_tokens <= 0:
-            res['status'] = 2
-            res['message'] = f"User {self.user_id} has no tokens left"
-            return res
-        self.n_tokens -= 1
-        return self.sync_to_db()
+    def use_consumables(
+        self,
+        chat_tokens: int = 1,
+        n_tokens: int = 0,
+        n_chars: int = 0,
+        comments: str = ""
+    ) -> dict:
+        # This is a class method wrapper for the generic function of the same name defined at the top
+        return use_consumables(
+            db_op=self.db_op,
+            table_name=self.consumption_table,
+            partition_key=f"{self.channel}_{self.user_id}",
+            chat_tokens=chat_tokens,
+            n_tokens=n_tokens,
+            n_chars=n_chars,
+            comments=comments
+        )
+
+    def add_order(
+        self,
+        n_tokens: int,
+        order_info: dict,
+        order_status: str = "open",
+        comments: str = ""
+    ) -> dict:
+        # Generate a new order and save it in the table. The order can be open (pending payment) or paid (effective immediately)
+        _, timestamp = generate_event_id()
+
+        entity = {
+            'PartitionKey': f"{self.channel}_{self.user_id}",
+            'RowKey': str(order_info['no']),
+            'eventtime': timestamp,
+            'data': json.dumps(order_info),
+            'tokens': n_tokens,
+            'status': order_status,
+            'comments': comments
+        }
+        return self.db_op.update_entities(entity, self.orders_table)
 
     def update_ip_history(self, user_data: dict) -> dict:
         self.ip_history.append((user_data['timestamp'], user_data['ip_address']))
