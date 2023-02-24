@@ -95,7 +95,7 @@ def get_js() -> str:
     # Read javascript web trackers code from script.js file
     with open(os.path.join(ROOT_DIR, "src", "script.js"), "r") as f:
         return f"""
-            <audio id="voicePlayer" #voicePlayer></audio>
+            <audio id="voicePlayer" autoplay #voicePlayer></audio>
             <script type='text/javascript'>{f.read()}</script>
         """
 
@@ -231,8 +231,8 @@ def update_sidebar() -> None:
                             st.error(f"生成支付码失败：{payment_res['msg']}")
                     if payment_res['code'] == "success":
                         alipay_logo_path = os.path.join(ROOT_DIR, "src", "assets", "120_348_alipay.png")
-                        st.image(f"data:image/gif;base64,{get_local_img(alipay_logo_path)}")
-                        st.image(payment_res['img'])
+                        st.image(f"data:image/gif;base64,{get_local_img(alipay_logo_path)}", width=200)
+                        st.image(payment_res['img'], width=200)
                         st.caption(f"支付完成后请点击上方的刷新按钮，查看聊天币余额。")
 
         # st.write("")
@@ -607,13 +607,11 @@ if "MEMORY" not in st.session_state:
 if "USER" not in st.session_state:
     with sidebar.container():
         st.caption("登录后可以查看用户信息")
+        if st.button("登录", key=f"login_button_{len(st.session_state.LOG)}"):
+            login_popup.open()
     with header.container():
-        col1, col2 = st.columns([1, 9])
-        with col1:
-            if st.button("登录", key=f"login_button_{len(st.session_state.LOG)}"):
-                login_popup.open()
-        with col2:
-            st.caption(f"<small>免登录试用版，登录后可以聊更多哦!</small>", unsafe_allow_html=True)
+        st.caption(f"<small>免登录限量版，请点击左侧的用户中心 [ <b>></b> ] 登录后，可以解锁聊天限制哦!</small>", unsafe_allow_html=True)
+
 else:
     # Sync user info from database and refresh the sidebar and header displays
     action_res = st.session_state.USER.sync_from_db()
@@ -621,7 +619,7 @@ else:
         st.error(f"同步用户信息失败！{action_res['msg']}")
         st.stop()
     if action_res['n_tokens'] > st.session_state.USER.n_tokens:
-        st.balloons()
+        st.session_state.BALLOONS = True
     st.session_state.USER.n_tokens = action_res['n_tokens']
     with sidebar.container():
         update_sidebar()
@@ -642,8 +640,11 @@ if login_popup.is_open():
     login_popup.close()
 
 if "NEW_USER" in st.session_state and st.session_state.NEW_USER:
-    st.balloons()
+    st.session_state.BALLOONS = True
     st.session_state.NEW_USER = False
+if "BALLOONS" in st.session_state and st.session_state.BALLOONS:
+    st.balloons()
+    st.session_state.BALLOONS = False
 
 with chat_box:
     for i, line in enumerate(st.session_state.LOG[1:]):
@@ -727,19 +728,24 @@ if len(human_prompt) > 0:
             st.stop()
         if DEBUG:
             print(f"Language detection result: {language_res['data']}")
-            st.stop()
-        if 'zh-cn' in language_res['data']:
-            # Synthesize the response and play it as audio
-            audio_play_time, b64 = synthesize_text(reply_text, speech_cfg, azure_synthesizer, speechsdk)
-            chars = len(reply_text)
-            if audio_play_time > 0 and len(b64) > 0:
-                # This part works in conjunction with the initialized script.js and puts the audio data into the audio player
-                components.html(f"""<script>
-                    window.parent.document.voicePlayer.src = "data:audio/mp3;base64,{b64}";
-                    window.parent.document.voicePlayer.play();
-                </script>""", height=0, width=0)
-        else:
-            audio_play_time, chars = 0, 0
+        audio_play_time, audio_chars = 0, 0
+        for item in language_res['data']:
+            if item['language'] == "zh" and item['isReliable']:
+                # Synthesize the response and play it as audio
+                audio_play_time, b64 = synthesize_text(reply_text, speech_cfg, azure_synthesizer, speechsdk)
+                audio_chars = len(reply_text)
+                if audio_play_time > 0 and len(b64) > 0:
+                    # This part works in conjunction with the initialized script.js and puts the audio data into the audio player
+                    components.html(f"""<script>
+                        window.parent.document.voicePlayer.src = "data:audio/mp3;base64,{b64}";
+                        window.parent.document.voicePlayer.pause();
+                        window.parent.document.voicePlayer.currentTime = 0;
+                        // Wait for 0.5 seconds and play
+                        setTimeout(() => {{
+                            window.parent.document.voicePlayer.play();
+                        }}, 500);
+                    </script>""", height=0, width=0)
+                    audio_play_time += 0.5  # To account for slight delay in the beginning of the audio
 
         # Start executing the consumption job in a separate thread
         if "USER" in st.session_state:
@@ -753,12 +759,12 @@ if len(human_prompt) > 0:
             partition_key,
             1,  # Chat tokens used
             NLP_tokens_used,
-            chars
+            audio_chars
         )
 
         # Loop so that reply_text gets revealed one character at a time
-        if chars > 0:
-            pause_per_char = 0.7 * audio_play_time / chars  # 0.7 because we want the text to appear a bit faster than the audio
+        if audio_chars > 0:
+            pause_per_char = 0.7 * audio_play_time / audio_chars  # 0.7 because we want the text to appear a bit faster than the audio
         else:
             pause_per_char = 0.1
         tic = time.time()
@@ -770,7 +776,7 @@ if len(human_prompt) > 0:
         # Pause for the remaining time, if any
         time.sleep(max(0, audio_play_time - (toc - tic)))
 
-        # Stop and the audio stream from voicePlayer
+        # Stop and clear the audio stream from voicePlayer
         components.html(f"""<script>
             window.parent.document.voicePlayer.pause();
             window.parent.document.voicePlayer.src = "";

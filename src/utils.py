@@ -82,11 +82,11 @@ def detect_language(text: str) -> dict:
         res['msg'] = f"{response.status_code}: {response.text}"
         return res
     resp = response.json()
-    if "detections" not in resp:
+    if 'data' not in resp or 'detections' not in resp['data']:
         res['status'] = 2
         res['msg'] = f"No detections in response: {resp}"
         return res
-    res['data'] = resp['detections']
+    res['data'] = resp['data']['detections']
     return res
 
 
