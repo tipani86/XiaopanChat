@@ -41,7 +41,7 @@ def use_consumables(
     n_chars: int = 0,
     comments: str = ""
 ) -> dict:
-    # Add negative tokens and synthesized characters info to tokenuse table under the user ID (or if not logged in, just under "unknown_user")
+    # Add negative tokens and synthesized characters info to consumption table under the user ID (or if not logged in, just under "unknown_user")
     row_key, timestamp = generate_event_id()
     entity = {
         'PartitionKey': partition_key,
@@ -418,7 +418,7 @@ class User:
         db_op,
         users_table: str = "users",
         orders_table: str = "orders",
-        tokenuse_table: str = "tokenuse"
+        consumption_table: str = "tokenUse"
     ) -> None:
 
         # Initialize the basic info
@@ -427,14 +427,14 @@ class User:
         self.db_op = db_op
         self.users_table = users_table
         self.orders_table = orders_table
-        self.tokenuse_table = tokenuse_table
+        self.consumption_table = consumption_table
         self.transactions = None
         self.n_tokens = 0
         self.executor = ThreadPoolExecutor(3)
 
     def sync_from_db(self) -> dict:
         res = {'status': 0, 'message': "Success", 'n_tokens': 0}
-        # Fetch the remaining user, orders and tokenuse table data with parallelism
+        # Fetch the remaining user, orders and consumption table data with parallelism
 
         # Submit user search
         query_filter = f"PartitionKey eq @channel and RowKey eq @user_id"
@@ -446,7 +446,7 @@ class User:
             query_filter, select, parameters, self.users_table
         )
 
-        # Submit orders and tokenuse search (they share the same select but slightly different
+        # Submit orders and consumption search (they share the same select but slightly different
         # parameters: we only want to see the orders which are "paid" because those are real)
         select = ["eventtime", "tokens", "comments"]
 
@@ -459,9 +459,9 @@ class User:
 
         query_filter = f"PartitionKey eq @key"
         parameters = {'key': f"{self.channel}_{self.user_id}"}
-        tokenuse_task = self.executor.submit(
+        consumption_task = self.executor.submit(
             self.db_op.query_entities,
-            query_filter, select, parameters, self.tokenuse_table
+            query_filter, select, parameters, self.consumption_table
         )
 
         # Wait on the user search result first because it's needed to determine if we go any further
@@ -492,10 +492,10 @@ class User:
             self.ip_history = json.loads(entity['ip_history'])
 
             # Count the available tokens from orders and usage data
-            tokens_task_res = wait([orders_task, tokenuse_task], timeout=TIMEOUT)
+            tokens_task_res = wait([orders_task, consumption_task], timeout=TIMEOUT)
             if len(tokens_task_res.not_done) > 0:
                 res['status'] = 1
-                res['message'] = f"Orders and/or tokenuse data fetching timed out after {TIMEOUT} seconds."
+                res['message'] = f"Orders and/or consumption data fetching timed out after {TIMEOUT} seconds."
                 return res
 
             transactions = []
@@ -572,7 +572,7 @@ class User:
         # This is a class method wrapper for the generic function of the same name defined at the top
         return use_consumables(
             db_op=self.db_op,
-            table_name=self.tokenuse_table,
+            table_name=self.consumption_table,
             partition_key=f"{self.channel}_{self.user_id}",
             chat_tokens=chat_tokens,
             n_tokens=n_tokens,

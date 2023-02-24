@@ -16,7 +16,7 @@ SET_NAMES = ["小白", "进阶", "王者", "钻石"]  # Full catalogue
 # Azure Table names
 USERS_TABLE = "users"
 ORDERS_TABLE = "orders"
-TOKENUSE_TABLE = "tokenuse"
+CONSUMPTION_TABLE = "tokenUse"
 
 
 # Generic internet settings
