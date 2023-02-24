@@ -59,12 +59,12 @@ def detect_language(text: str) -> dict:
     # Detect language of the text using a call to Rapid API with retry logic
     res = {'status': 0, 'msg': 'success', 'data': None}
 
-    url = "https://text-analysis12.p.rapidapi.com/language-detection/api/v1.1"
-    payload = {'text': text}
+    url = "https://community-language-detection.p.rapidapi.com/detect"
+    payload = {'q': text}
     headers = {
         'content-type': "application/json",
         'X-RapidAPI-Key': f"{os.getenv('RAPID_API_KEY')}",
-        'X-RapidAPI-Host': "text-analysis12.p.rapidapi.com"
+        'X-RapidAPI-Host': "community-language-detection.p.rapidapi.com"
     }
     for i in range(N_RETRIES):
         try:
@@ -72,8 +72,8 @@ def detect_language(text: str) -> dict:
             break
         except Exception as e:
             if i == N_RETRIES - 1:
-                res['status'] = 2
-                res['msg'] = e
+                res['status'] = 1
+                res['msg'] = f"Timeout error: {e}"
                 return res
             else:
                 time.sleep(COOLDOWN * BACKOFF ** i)
@@ -82,11 +82,11 @@ def detect_language(text: str) -> dict:
         res['msg'] = f"{response.status_code}: {response.text}"
         return res
     resp = response.json()
-    if not resp['ok']:
+    if "detections" not in resp:
         res['status'] = 2
-        res['msg'] = resp['msg']
+        res['msg'] = f"No detections in response: {resp}"
         return res
-    res['data'] = resp['language_probability']
+    res['data'] = resp['detections']
     return res
 
 

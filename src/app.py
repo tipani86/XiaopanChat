@@ -95,7 +95,7 @@ def get_js() -> str:
     # Read javascript web trackers code from script.js file
     with open(os.path.join(ROOT_DIR, "src", "script.js"), "r") as f:
         return f"""
-            <audio id="voicePlayer" autoplay #voicePlayer></audio>
+            <audio id="voicePlayer" #voicePlayer></audio>
             <script type='text/javascript'>{f.read()}</script>
         """
 
@@ -204,13 +204,13 @@ def update_sidebar() -> None:
                 if DEBUG:
                     price = 0.1
                     remark += " (DEBUG PRICE)"
-                # Format requirements: http://7-pay.cn/doc.php#d2
+                # Format requirements: http://7-pay.cn/doc.php#d2 (In my experience, using GET works. Didn't work with POST when I tried.)
                 order_info = {
                     'body': str(set_name),
                     'fee': round(price, 2),
                     'pay_type': "alipay",
                     'no': int(row_key),
-                    'notify_url': f"{payment_cfg['callback_endpoint']}{os.getenv('PAYMENT_CALLBACK_ROUTE')}",
+                    'notify_url': f"{endpoints['callback_endpoint']}{os.getenv('PAYMENT_CALLBACK_ROUTE')}",
                     'pid': os.getenv('SEVENPAY_PID'),
                     'remark': str(remark)
                 }
@@ -224,7 +224,7 @@ def update_sidebar() -> None:
                     with st.spinner("支付码生成中..."):
                         # Second, send the order info to the payment gateway and request QR code
                         payment_res = get_payment_QR(
-                            payment_cfg['endpoint'],
+                            endpoints['sevenpay_endpoint'],
                             order_info
                         )
                         if payment_res['code'] != "success":
@@ -280,7 +280,7 @@ def render_login_popup(
                 with st.spinner("正在获取登录二维码..."):
                     # Call the WeChat login service with retry, cooldown and backoff
                     url = os.path.join(
-                        wx_login_cfg['endpoint'],
+                        endpoints['wx_login_endpoint'],
                         f"tempUserId?secretKey={os.getenv('WX_LOGIN_SECRET')}"
                     )
                     for i in range(N_RETRIES):
@@ -505,12 +505,13 @@ for key in ["voice", "rate", "pitch"]:
         st.stop()
 
 
-# Load WeChat login configuration and validate its data
-wx_login_cfg_path = os.path.join(ROOT_DIR, "cfg", "wx_login.json")
-wx_login_cfg = get_json(wx_login_cfg_path)
-if 'endpoint' not in wx_login_cfg:
-    st.error("WeChat login endpoint not found in configuration file.")
-    st.stop()
+# Load endpoints configuration and validate its data
+endpoints_path = os.path.join(ROOT_DIR, "cfg", "endpoints.json")
+endpoints = get_json(endpoints_path)
+for key in ["sevenpay_endpoint", "wx_login_endpoint", "callback_endpoint"]:
+    if key not in endpoints:
+        st.error(f"Key {key} not found in endpoints configuration file.")
+        st.stop()
 
 
 # Load product catalogue configuration and validate its data
@@ -521,15 +522,6 @@ for set_name in catalogue:
         if key not in catalogue[set_name]:
             st.error(f"Set {set_name} is missing key {key} in catalogue configuration file.")
             st.stop()
-
-
-# Load payment gateway configuration and validate its data
-payment_cfg_path = os.path.join(ROOT_DIR, "cfg", "alipay_gateway.json")
-payment_cfg = get_json(payment_cfg_path)
-for key in ['endpoint', 'callback_endpoint']:
-    if key not in payment_cfg:
-        st.error(f"Key {key} not found in payment gateway configuration file.")
-        st.stop()
 
 
 # Initialize humanized time output in Simplified Chinese
@@ -565,7 +557,7 @@ else:
 # (Azure tends to spin them down after some inactivity)
 if "WARM_UP" not in st.session_state or not st.session_state.WARM_UP:
     with st.spinner("小潘AI正在预热中..."):
-        warm_up_res = warm_up_api_server(payment_cfg['callback_endpoint'])
+        warm_up_res = warm_up_api_server(endpoints['callback_endpoint'])
 
     if warm_up_res['status'] != 0:
         st.error(f"小潘AI启动失败！{warm_up_res['msg']}")
@@ -735,13 +727,17 @@ if len(human_prompt) > 0:
             st.stop()
         if DEBUG:
             print(f"Language detection result: {language_res['data']}")
+            st.stop()
         if 'zh-cn' in language_res['data']:
             # Synthesize the response and play it as audio
             audio_play_time, b64 = synthesize_text(reply_text, speech_cfg, azure_synthesizer, speechsdk)
             chars = len(reply_text)
             if audio_play_time > 0 and len(b64) > 0:
                 # This part works in conjunction with the initialized script.js and puts the audio data into the audio player
-                components.html(f"""<script>window.parent.document.voicePlayer.src = "data:audio/mp3;base64,{b64}";</script>""", height=0, width=0)
+                components.html(f"""<script>
+                    window.parent.document.voicePlayer.src = "data:audio/mp3;base64,{b64}";
+                    window.parent.document.voicePlayer.play();
+                </script>""", height=0, width=0)
         else:
             audio_play_time, chars = 0, 0
 
@@ -774,6 +770,12 @@ if len(human_prompt) > 0:
         # Pause for the remaining time, if any
         time.sleep(max(0, audio_play_time - (toc - tic)))
 
+        # Stop and the audio stream from voicePlayer
+        components.html(f"""<script>
+            window.parent.document.voicePlayer.pause();
+            window.parent.document.voicePlayer.src = "";
+        </script>""", height=0, width=0)
+
         # Wait for the consumption job to finish
         consumption_task_res = wait([consumption_task], timeout=TIMEOUT)
         if len(consumption_task_res.not_done) > 0:
@@ -783,9 +785,6 @@ if len(human_prompt) > 0:
 
         for task_res in consumption_task_res.done:
             action_res = task_res.result()
-
-        # Clear the audio stream from voicePlayer
-        components.html(f"""<script>window.parent.document.voicePlayer.src = "";</script>""", height=0, width=0)
 
         # Clear the writing animation
         writing_animation.empty()
