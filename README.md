@@ -15,4 +15,4 @@ But I wanted to improve the app still, so I kept working on it and added many mo
 
 ## Roadmap
 
-1. Investigate the possibility of referrals, earning tokens by inviting friends
+- Check the issues page for open issues and feature requests
