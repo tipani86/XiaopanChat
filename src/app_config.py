@@ -1,5 +1,5 @@
 # Debug switch
-DEBUG = True
+DEBUG = False
 
 
 # App settings
@@ -9,8 +9,8 @@ FREE_TOKENS_PER_REFERRAL = 10
 
 
 # Products on sale
-SET_NAMES = ["小白", "进阶"]
-# SET_NAMES = ["小白", "进阶", "王者", "钻石"]  # Full catalogue but two high end ones hidden for now
+# SET_NAMES = ["小白", "进阶"]  # Partial catalogue with two higher end products hidden
+SET_NAMES = ["小白", "进阶", "王者", "钻石"]  # Full catalogue
 
 
 # Azure Table names

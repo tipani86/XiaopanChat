@@ -204,13 +204,13 @@ def update_sidebar() -> None:
                 if DEBUG:
                     price = 0.1
                     remark += " (DEBUG PRICE)"
-                # Format requirements: http://7-pay.cn/doc.php#d2
+                # Format requirements: http://7-pay.cn/doc.php#d2 (In my experience, using GET works. Didn't work with POST when I tried.)
                 order_info = {
                     'body': str(set_name),
                     'fee': round(price, 2),
                     'pay_type': "alipay",
                     'no': int(row_key),
-                    'notify_url': f"{payment_cfg['callback_endpoint']}{os.getenv('PAYMENT_CALLBACK_ROUTE')}",
+                    'notify_url': f"{endpoints['callback_endpoint']}{os.getenv('PAYMENT_CALLBACK_ROUTE')}",
                     'pid': os.getenv('SEVENPAY_PID'),
                     'remark': str(remark)
                 }
@@ -224,15 +224,15 @@ def update_sidebar() -> None:
                     with st.spinner("支付码生成中..."):
                         # Second, send the order info to the payment gateway and request QR code
                         payment_res = get_payment_QR(
-                            payment_cfg['endpoint'],
+                            endpoints['sevenpay_endpoint'],
                             order_info
                         )
                         if payment_res['code'] != "success":
                             st.error(f"生成支付码失败：{payment_res['msg']}")
                     if payment_res['code'] == "success":
                         alipay_logo_path = os.path.join(ROOT_DIR, "src", "assets", "120_348_alipay.png")
-                        st.image(f"data:image/gif;base64,{get_local_img(alipay_logo_path)}")
-                        st.image(payment_res['img'])
+                        st.image(f"data:image/gif;base64,{get_local_img(alipay_logo_path)}", width=200)
+                        st.image(payment_res['img'], width=200)
                         st.caption(f"支付完成后请点击上方的刷新按钮，查看聊天币余额。")
 
         # st.write("")
@@ -280,7 +280,7 @@ def render_login_popup(
                 with st.spinner("正在获取登录二维码..."):
                     # Call the WeChat login service with retry, cooldown and backoff
                     url = os.path.join(
-                        wx_login_cfg['endpoint'],
+                        endpoints['wx_login_endpoint'],
                         f"tempUserId?secretKey={os.getenv('WX_LOGIN_SECRET')}"
                     )
                     for i in range(N_RETRIES):
@@ -505,12 +505,13 @@ for key in ["voice", "rate", "pitch"]:
         st.stop()
 
 
-# Load WeChat login configuration and validate its data
-wx_login_cfg_path = os.path.join(ROOT_DIR, "cfg", "wx_login.json")
-wx_login_cfg = get_json(wx_login_cfg_path)
-if 'endpoint' not in wx_login_cfg:
-    st.error("WeChat login endpoint not found in configuration file.")
-    st.stop()
+# Load endpoints configuration and validate its data
+endpoints_path = os.path.join(ROOT_DIR, "cfg", "endpoints.json")
+endpoints = get_json(endpoints_path)
+for key in ["sevenpay_endpoint", "wx_login_endpoint", "callback_endpoint"]:
+    if key not in endpoints:
+        st.error(f"Key {key} not found in endpoints configuration file.")
+        st.stop()
 
 
 # Load product catalogue configuration and validate its data
@@ -521,15 +522,6 @@ for set_name in catalogue:
         if key not in catalogue[set_name]:
             st.error(f"Set {set_name} is missing key {key} in catalogue configuration file.")
             st.stop()
-
-
-# Load payment gateway configuration and validate its data
-payment_cfg_path = os.path.join(ROOT_DIR, "cfg", "alipay_gateway.json")
-payment_cfg = get_json(payment_cfg_path)
-for key in ['endpoint', 'callback_endpoint']:
-    if key not in payment_cfg:
-        st.error(f"Key {key} not found in payment gateway configuration file.")
-        st.stop()
 
 
 # Initialize humanized time output in Simplified Chinese
@@ -565,7 +557,7 @@ else:
 # (Azure tends to spin them down after some inactivity)
 if "WARM_UP" not in st.session_state or not st.session_state.WARM_UP:
     with st.spinner("小潘AI正在预热中..."):
-        warm_up_res = warm_up_api_server(payment_cfg['callback_endpoint'])
+        warm_up_res = warm_up_api_server(endpoints['callback_endpoint'])
 
     if warm_up_res['status'] != 0:
         st.error(f"小潘AI启动失败！{warm_up_res['msg']}")
@@ -615,13 +607,11 @@ if "MEMORY" not in st.session_state:
 if "USER" not in st.session_state:
     with sidebar.container():
         st.caption("登录后可以查看用户信息")
+        if st.button("登录", key=f"login_button_{len(st.session_state.LOG)}"):
+            login_popup.open()
     with header.container():
-        col1, col2 = st.columns([1, 9])
-        with col1:
-            if st.button("登录", key=f"login_button_{len(st.session_state.LOG)}"):
-                login_popup.open()
-        with col2:
-            st.caption(f"<small>免登录试用版，登录后可以聊更多哦!</small>", unsafe_allow_html=True)
+        st.caption(f"<small>免登录限量版，请点击左侧的用户中心 [ <b>></b> ] 登录后，可以解锁聊天限制哦!</small>", unsafe_allow_html=True)
+
 else:
     # Sync user info from database and refresh the sidebar and header displays
     action_res = st.session_state.USER.sync_from_db()
@@ -629,7 +619,7 @@ else:
         st.error(f"同步用户信息失败！{action_res['msg']}")
         st.stop()
     if action_res['n_tokens'] > st.session_state.USER.n_tokens:
-        st.balloons()
+        st.session_state.BALLOONS = True
     st.session_state.USER.n_tokens = action_res['n_tokens']
     with sidebar.container():
         update_sidebar()
@@ -650,8 +640,11 @@ if login_popup.is_open():
     login_popup.close()
 
 if "NEW_USER" in st.session_state and st.session_state.NEW_USER:
-    st.balloons()
+    st.session_state.BALLOONS = True
     st.session_state.NEW_USER = False
+if "BALLOONS" in st.session_state and st.session_state.BALLOONS:
+    st.balloons()
+    st.session_state.BALLOONS = False
 
 with chat_box:
     for i, line in enumerate(st.session_state.LOG[1:]):
@@ -735,15 +728,24 @@ if len(human_prompt) > 0:
             st.stop()
         if DEBUG:
             print(f"Language detection result: {language_res['data']}")
-        if 'zh-cn' in language_res['data']:
-            # Synthesize the response and play it as audio
-            audio_play_time, b64 = synthesize_text(reply_text, speech_cfg, azure_synthesizer, speechsdk)
-            chars = len(reply_text)
-            if audio_play_time > 0 and len(b64) > 0:
-                # This part works in conjunction with the initialized script.js and puts the audio data into the audio player
-                components.html(f"""<script>window.parent.document.voicePlayer.src = "data:audio/mp3;base64,{b64}";</script>""", height=0, width=0)
-        else:
-            audio_play_time, chars = 0, 0
+        audio_play_time, audio_chars = 0, 0
+        for item in language_res['data']:
+            if item['language'] == "zh" and item['isReliable']:
+                # Synthesize the response and play it as audio
+                audio_play_time, b64 = synthesize_text(reply_text, speech_cfg, azure_synthesizer, speechsdk)
+                audio_chars = len(reply_text)
+                if audio_play_time > 0 and len(b64) > 0:
+                    # This part works in conjunction with the initialized script.js and puts the audio data into the audio player
+                    components.html(f"""<script>
+                        window.parent.document.voicePlayer.src = "data:audio/mp3;base64,{b64}";
+                        window.parent.document.voicePlayer.pause();
+                        window.parent.document.voicePlayer.currentTime = 0;
+                        // Wait for 0.5 seconds and play
+                        setTimeout(() => {{
+                            window.parent.document.voicePlayer.play();
+                        }}, 500);
+                    </script>""", height=0, width=0)
+                    audio_play_time += 0.5  # To account for slight delay in the beginning of the audio
 
         # Start executing the consumption job in a separate thread
         if "USER" in st.session_state:
@@ -757,12 +759,12 @@ if len(human_prompt) > 0:
             partition_key,
             1,  # Chat tokens used
             NLP_tokens_used,
-            chars
+            audio_chars
         )
 
         # Loop so that reply_text gets revealed one character at a time
-        if chars > 0:
-            pause_per_char = 0.7 * audio_play_time / chars  # 0.7 because we want the text to appear a bit faster than the audio
+        if audio_chars > 0:
+            pause_per_char = 0.7 * audio_play_time / audio_chars  # 0.7 because we want the text to appear a bit faster than the audio
         else:
             pause_per_char = 0.1
         tic = time.time()
@@ -774,6 +776,12 @@ if len(human_prompt) > 0:
         # Pause for the remaining time, if any
         time.sleep(max(0, audio_play_time - (toc - tic)))
 
+        # Stop and clear the audio stream from voicePlayer
+        components.html(f"""<script>
+            window.parent.document.voicePlayer.pause();
+            window.parent.document.voicePlayer.src = "";
+        </script>""", height=0, width=0)
+
         # Wait for the consumption job to finish
         consumption_task_res = wait([consumption_task], timeout=TIMEOUT)
         if len(consumption_task_res.not_done) > 0:
@@ -783,9 +791,6 @@ if len(human_prompt) > 0:
 
         for task_res in consumption_task_res.done:
             action_res = task_res.result()
-
-        # Clear the audio stream from voicePlayer
-        components.html(f"""<script>window.parent.document.voicePlayer.src = "";</script>""", height=0, width=0)
 
         # Clear the writing animation
         writing_animation.empty()

@@ -11,8 +11,8 @@ But I wanted to improve the app still, so I kept working on it and added many mo
 - Basic chatbot functionality built on top of OpenAI APIs
 - WeChat login for basic user management and chat tokens tracking
 - Azure Speech integration to let the bot also speak
+- Payment integration with Alipay to add more chat tokens
 
 ## Roadmap
 
-1. [ ] Payment to directly buy tokens (along with improved token management and traceability system)
-2. [ ] Investigate the possibility of referrals, earning tokens by inviting friends
+1. Investigate the possibility of referrals, earning tokens by inviting friends

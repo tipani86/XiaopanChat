@@ -1,4 +1,0 @@
-{
-    "endpoint": "https://v2.7-pay.cn/creat.php",
-    "callback_endpoint": "https://xiaopan-chat-api.azurewebsites.net"
-}
