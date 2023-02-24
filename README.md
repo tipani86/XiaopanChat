@@ -15,4 +15,4 @@ But I wanted to improve the app still, so I kept working on it and added many mo
 
 ## Roadmap
 
-- Check the issues page for open issues and feature requests
+- Check the [https://github.com/tipani86/XiaopanChat/issues](issues) page for open issues and feature requests
