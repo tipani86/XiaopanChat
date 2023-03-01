@@ -35,7 +35,7 @@ PRE_SUMMARY_PROMPT = "The above is the conversation so far between you, the AI a
 PRE_SUMMARY_NOTE = "Before the actual log, here's a summary of the conversation so far:"
 POST_SUMMARY_NOTE = "The summary ends. And here are the last two messages from the conversation before your reply:"
 
-NLP_MODEL_NAME = "text-davinci-003"
+NLP_MODEL_NAME = "gpt-3.5-turbo"
 NLP_MODEL_MAX_TOKENS = 4000
 NLP_MODEL_REPLY_MAX_TOKENS = 1500
 NLP_MODEL_TEMPERATURE = 0.8
