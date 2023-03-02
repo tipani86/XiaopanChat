@@ -1,5 +1,5 @@
 # Debug switch
-DEBUG = False
+DEBUG = True
 
 
 # App settings

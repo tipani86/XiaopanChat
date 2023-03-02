@@ -421,7 +421,7 @@ def render_login_popup(
 
 def generate_messages_from_memory():
     # Check whether tokenized model memory so far + max reply length exceeds the max possible tokens
-    memory_str = ["\n".join([m['content'] for m in st.session_state.MEMORY])]
+    memory_str = "\n".join([m['content'] for m in st.session_state.MEMORY])
     memory_tokens = tokenizer.tokenize(memory_str)
     tokens_used = 0  # NLP tokens (for OpenAI)
     if len(memory_tokens) + NLP_MODEL_REPLY_MAX_TOKENS > NLP_MODEL_MAX_TOKENS:
@@ -474,7 +474,7 @@ def generate_messages_from_memory():
 
                 # Re-generate prompt from new memory
                 new_prompt = st.session_state.MEMORY
-                new_prompt_str = ["\n".join([m['content'] for m in new_prompt])]
+                new_prompt_str = "\n".join([m['content'] for m in new_prompt])
                 new_prompt_tokens = tokenizer.tokenize(new_prompt_str)
                 tokens_used += len(new_prompt_tokens)
 
@@ -672,7 +672,7 @@ components.html(get_js(), height=0, width=0)
 # Initialize/maintain a chat log and chat memory in Streamlit's session state
 # Log is the actual line by line chat, while memory is limited by model's maximum token context length
 if "MEMORY" not in st.session_state:
-    st.session_state.MEMORY = [INITIAL_PROMPT]
+    st.session_state.MEMORY = [{'role': "system", 'content': INITIAL_PROMPT}]
     st.session_state.LOG = [INITIAL_PROMPT]
 
 
@@ -759,7 +759,7 @@ if len(human_prompt) > 0:
 
     with chat_box:
         # Write the latest human message first
-        line = st.session_state.LOG[-2]
+        line = st.session_state.LOG[-1]
         contents = line.split("Human: ")[1]
         st.markdown(get_chat_message(contents, align="right"), unsafe_allow_html=True)
 
@@ -875,7 +875,7 @@ if len(human_prompt) > 0:
         # Update the chat LOG and memories with the actual response
         st.session_state.LOG.append(f"AI: {reply_text}")
         st.session_state.MEMORY.append({'role': "assistant", 'content': reply_text})
-        
+
         if "USER" not in st.session_state and len(st.session_state.LOG) > DEMO_HISTORY_LIMIT * 2:
             st.warning(f"**公测版，限{DEMO_HISTORY_LIMIT}次对话轮回**\n\n感谢您对小潘AI的兴趣。若想继续聊天，请在页面顶部进行登录！")
             prompt_box.empty()
