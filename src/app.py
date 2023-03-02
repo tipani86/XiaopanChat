@@ -419,6 +419,78 @@ def render_login_popup(
                     login_popup.close()
 
 
+def generate_messages_from_memory():
+    # Check whether tokenized model memory so far + max reply length exceeds the max possible tokens
+    memory_str = ["\n".join([m['content'] for m in st.session_state.MEMORY])]
+    memory_tokens = tokenizer.tokenize(memory_str)
+    tokens_used = 0  # NLP tokens (for OpenAI)
+    if len(memory_tokens) + NLP_MODEL_REPLY_MAX_TOKENS > NLP_MODEL_MAX_TOKENS:
+        # Strategy: We keep the first item of memory (original prompt), and last three items
+        # (last AI message, human's reply, and the 'AI:' prompt) intact, and summarize the middle part
+        summarizable_memory = st.session_state.MEMORY[1:-3]
+
+        # We write a new prompt asking the model to summarize this middle part
+        summarizable_memory += [{'role': "system", 'content': PRE_SUMMARY_PROMPT}]
+        summarizable_str = ["\n".join([m['content'] for m in summarizable_memory])]
+        summarizable_tokens = tokenizer.tokenize(summarizable_str)
+        tokens_used += len(summarizable_tokens)
+
+        # Check whether the summarizable tokens + 75% of the reply length exceeds the max possible tokens.
+        # If so, adjust down to 50% of the reply length and try again, lastly if even 25% of the reply tokens still exceed, call an error.
+        for ratio in [0.75, 0.5, 0.25]:
+            if len(summarizable_tokens) + int(NLP_MODEL_REPLY_MAX_TOKENS * ratio) <= NLP_MODEL_MAX_TOKENS:
+                # Call the OpenAI API with retry and all that shebang
+                for i in range(N_RETRIES):
+                    try:
+                        response = openai.ChatCompletion.create(
+                            model=NLP_MODEL_NAME,
+                            messages=summarizable_str,
+                            temperature=NLP_MODEL_TEMPERATURE,
+                            max_tokens=int(NLP_MODEL_REPLY_MAX_TOKENS * ratio),
+                            frequency_penalty=NLP_MODEL_FREQUENCY_PENALTY,
+                            presence_penalty=NLP_MODEL_PRESENCE_PENALTY,
+                            stop=NLP_MODEL_STOP_WORDS,
+                        )
+                        break
+                    except Exception as e:
+                        if i == N_RETRIES - 1:
+                            st.error(f"小潘AI出错了: {e}")
+                            st.stop()
+                        else:
+                            time.sleep(COOLDOWN * BACKOFF ** i)
+                summary_text = response['choices'][0]['message']['content'].strip()
+                tokens_used += len(tokenizer.tokenize(summary_text))
+
+                # Re-build memory so it consists of the original prompt, a note that a summary follows,
+                # the actual summary, a second note that the last two conversation items follow,
+                # then the last three items from the original memory
+                new_memory = st.session_state.MEMORY[:1] + \
+                    [{'role': "system", 'content': PRE_SUMMARY_NOTE}] + \
+                    [{'role': "assistant", 'content': summary_text}] + \
+                    [{'role': "system", 'content': POST_SUMMARY_NOTE}] + \
+                    st.session_state.MEMORY[-3:]
+
+                st.session_state.MEMORY = new_memory
+
+                # Re-generate prompt from new memory
+                new_prompt = st.session_state.MEMORY
+                new_prompt_str = ["\n".join([m['content'] for m in new_prompt])]
+                new_prompt_tokens = tokenizer.tokenize(new_prompt_str)
+                tokens_used += len(new_prompt_tokens)
+
+                if DEBUG:
+                    st.info(f"Summarization triggered. New prompt:\n\n{new_prompt}")
+
+                return new_prompt, tokens_used
+
+        st.error("小潘AI出错了: 你的消息太长了，小潘AI无法处理")
+        st.stop()
+
+    # No need to summarize, just return the original prompt
+    tokens_used += len(memory_tokens)
+    return st.session_state.MEMORY, tokens_used
+
+
 def generate_prompt_from_memory():
     # Check whether tokenized model memory so far + max reply length exceeds the max possible tokens
     memory_str = "\n".join(st.session_state.MEMORY)
@@ -434,6 +506,7 @@ def generate_prompt_from_memory():
         summarizable_str = "\n".join(summarizable_memory)
         summarizable_tokens = tokenizer.tokenize(summarizable_str)
         tokens_used += len(summarizable_tokens)
+
         # Check whether the summarizable tokens + 75% of the reply length exceeds the max possible tokens.
         # If so, adjust down to 50% of the reply length and try again, lastly if even 25% of the reply tokens still exceed, call an error.
         for ratio in [0.75, 0.5, 0.25]:
@@ -678,8 +751,7 @@ if len(human_prompt) > 0:
 
     # Update both chat log and the model memory (copy two last entries from LOG to MEMORY)
     st.session_state.LOG.append("Human: " + human_prompt)
-    st.session_state.LOG.append("AI: ")
-    st.session_state.MEMORY.extend(st.session_state.LOG[-2:])
+    st.session_state.MEMORY.append({'role': "user", 'content': human_prompt})
 
     # Run a special JS code to clear the input box after human_prompt is used
     # components.html(clear_input_script, height=0, width=0)
@@ -699,19 +771,20 @@ if len(human_prompt) > 0:
         writing_animation.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;<img src='data:image/gif;base64,{get_local_img(file_path)}' width=30 height=10>", unsafe_allow_html=True)
 
         # Call the OpenAI API to generate a response with retry, cooldown and backoff
-        prompt, NLP_tokens_used = generate_prompt_from_memory()
+        # prompt, NLP_tokens_used = generate_prompt_from_memory()
+        prompt, NLP_tokens_used = generate_messages_from_memory()
         reply_box.markdown(get_chat_message(), unsafe_allow_html=True)
         for i in range(N_RETRIES):
             try:
-                reply_text = openai.Completion.create(
+                reply_text = openai.ChatCompletion.create(
                     model=NLP_MODEL_NAME,
-                    prompt=prompt,
+                    messages=prompt,
                     temperature=NLP_MODEL_TEMPERATURE,
                     max_tokens=NLP_MODEL_REPLY_MAX_TOKENS,
                     frequency_penalty=NLP_MODEL_FREQUENCY_PENALTY,
                     presence_penalty=NLP_MODEL_PRESENCE_PENALTY,
                     stop=NLP_MODEL_STOP_WORDS,
-                ).choices[0].text.strip()
+                ).choices[0].message.content.strip()
                 break
             except Exception as e:
                 if i == N_RETRIES - 1:
@@ -720,7 +793,6 @@ if len(human_prompt) > 0:
                     st.stop()
                 else:
                     time.sleep(COOLDOWN * BACKOFF ** i)
-        NLP_tokens_used += len(reply_text)
         language_res = detect_language(reply_text)
         if language_res['status'] != 0:
             reply_box.empty()
@@ -801,9 +873,9 @@ if len(human_prompt) > 0:
             st.stop()
 
         # Update the chat LOG and memories with the actual response
-        st.session_state.LOG[-1] += reply_text
-        st.session_state.MEMORY[-1] += reply_text
-
+        st.session_state.LOG.append(f"AI: {reply_text}")
+        st.session_state.MEMORY.append({'role': "assistant", 'content': reply_text})
+        
         if "USER" not in st.session_state and len(st.session_state.LOG) > DEMO_HISTORY_LIMIT * 2:
             st.warning(f"**公测版，限{DEMO_HISTORY_LIMIT}次对话轮回**\n\n感谢您对小潘AI的兴趣。若想继续聊天，请在页面顶部进行登录！")
             prompt_box.empty()
