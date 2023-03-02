@@ -1,5 +1,5 @@
 {
     "sevenpay_endpoint": "https://v2.7-pay.cn/creat.php",
     "wx_login_endpoint": "https://server01.vicy.cn/8lXdSX7FSMykbl9nFDWESdc6zfouSAEz/wxLogin",
-    "callback_endpoint": "https://xiaopan-chat-api.azurewebsites.net"
+    "callback_endpoint": "https://xp-api-571c7628-a8ef-491a-8985-ed71f1d1080a.azurewebsites.net/"
 }
