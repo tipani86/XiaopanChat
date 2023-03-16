@@ -167,12 +167,10 @@ async def main(human_prompt):
                     st.stop()
 
                 reply_text = chatbot_reply_res['data']['reply_text']
-                language = chatbot_reply_res['data']['language']
-
-            st.write(chatbot_reply_res)
+                languages = chatbot_reply_res['data']['language']
 
             audio_play_time, audio_chars = 0, 0
-            for item in language['data']:
+            for item in languages:
                 if item['language'] == "zh" and item['isReliable']:
                     # Synthesize the response and play it as audio
                     audio_play_time, b64 = synthesize_text(reply_text, speech_cfg, azure_synthesizer, speechsdk)
