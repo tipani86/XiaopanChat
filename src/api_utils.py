@@ -143,7 +143,6 @@ async def get_chatbot_reply_data_async(
         'stop': NLP_MODEL_STOP_WORDS,
     }
     api_res = await call_post_api_async(httpclient, url, headers, data)
-    print(api_res)
     if api_res['status'] != 0:
         res['status'] = api_res['status']
         res['message'] = api_res['message']
@@ -152,7 +151,7 @@ async def get_chatbot_reply_data_async(
     reply_text = api_res['data']['choices'][0]['message']['content'].strip()
 
     # Detect language of the reply
-    language_res = await detect_language_async(reply_text)
+    language_res = await detect_language_async(httpclient, reply_text)
     if language_res['status'] != 0:
         res['status'] = language_res['status']
         res['message'] = language_res['message']

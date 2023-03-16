@@ -217,13 +217,12 @@ async def main(human_prompt):
         st.session_state.LOG.append(f"AI: {reply_text}")
         st.session_state.MEMORY.append({'role': "assistant", 'content': reply_text})
 
+        st.experimental_rerun()
+
     except:
         st.error(traceback.format_exc())
         st.stop()
 
-    finally:
-        # st.experimental_rerun()
-        pass
 
 ### INITIALIZE AND LOAD ###
 
