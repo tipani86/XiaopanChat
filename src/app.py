@@ -169,6 +169,8 @@ async def main(human_prompt):
                 reply_text = chatbot_reply_res['data']['reply_text']
                 language = chatbot_reply_res['data']['language']
 
+            st.write(chatbot_reply_res)
+
             audio_play_time, audio_chars = 0, 0
             for item in language['data']:
                 if item['language'] == "zh" and item['isReliable']:
