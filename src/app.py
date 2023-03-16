@@ -153,7 +153,6 @@ async def main(human_prompt):
                     st.session_state.MEMORY,
                     os.getenv("OPENAI_API_KEY")
                 )
-                print(prompt_res)
                 if prompt_res['status'] != 0:
                     st.error(prompt_res['message'])
                     st.stop()
@@ -163,7 +162,6 @@ async def main(human_prompt):
                     prompt_res['data']['messages'],
                     os.getenv("OPENAI_API_KEY")
                 )
-                print(chatbot_reply_res)
                 if chatbot_reply_res['status'] != 0:
                     st.error(chatbot_reply_res['message'])
                     st.stop()
@@ -221,9 +219,11 @@ async def main(human_prompt):
 
     except:
         st.error(traceback.format_exc())
+        st.stop()
 
     finally:
-        st.experimental_rerun()
+        # st.experimental_rerun()
+        pass
 
 ### INITIALIZE AND LOAD ###
 
