@@ -1,3 +1,4 @@
+aiohttp
 streamlit
 transformers
 azure-cognitiveservices-speech==1.21.0
