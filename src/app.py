@@ -191,7 +191,7 @@ async def main(human_prompt):
 
             # Loop so that reply_text gets revealed one character at a time
             if audio_chars > 0:
-                pause_per_char = 0.7 * audio_play_time / audio_chars  # 0.7 because we want the text to appear a bit faster than the audio
+                pause_per_char = 0.85 * audio_play_time / audio_chars  # 0.85 because we want the text to appear a bit faster than the audio
             else:
                 pause_per_char = 0.1
             tic = time.time()
@@ -217,12 +217,13 @@ async def main(human_prompt):
         st.session_state.LOG.append(f"AI: {reply_text}")
         st.session_state.MEMORY.append({'role': "assistant", 'content': reply_text})
 
+        # Wait for one second before calling rerun
+        await asyncio.sleep(1)
+        st.experimental_rerun()
+
     except:
         st.error(traceback.format_exc())
         st.stop()
-
-    finally:
-        st.experimental_rerun()
 
 
 ### INITIALIZE AND LOAD ###
