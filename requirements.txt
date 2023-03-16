@@ -1,9 +1,3 @@
-openai
-qrcode
-humanize
 streamlit
-streamlit-modal
-azure-core
-azure-data-tables
 transformers
 azure-cognitiveservices-speech==1.21.0
