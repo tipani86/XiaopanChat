@@ -184,9 +184,9 @@ async def main(human_prompt):
                             // Wait for 0.5 seconds and play
                             setTimeout(() => {{
                                 window.parent.document.voicePlayer.play();
-                            }}, 500);
+                            }}, 1000);
                         </script>""", height=0, width=0)
-                        audio_play_time += 0.5  # To account for slight delay in the beginning of the audio
+                        audio_play_time += 1.0  # To account for slight delay in the beginning of the audio
                     break
 
             # Loop so that reply_text gets revealed one character at a time
@@ -217,11 +217,12 @@ async def main(human_prompt):
         st.session_state.LOG.append(f"AI: {reply_text}")
         st.session_state.MEMORY.append({'role': "assistant", 'content': reply_text})
 
-        st.experimental_rerun()
-
     except:
         st.error(traceback.format_exc())
         st.stop()
+
+    finally:
+        st.experimental_rerun()
 
 
 ### INITIALIZE AND LOAD ###
