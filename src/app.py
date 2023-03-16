@@ -217,13 +217,15 @@ async def main(human_prompt):
         st.session_state.LOG.append(f"AI: {reply_text}")
         st.session_state.MEMORY.append({'role': "assistant", 'content': reply_text})
 
-        # Wait for one second before calling rerun
-        await asyncio.sleep(1)
-        st.experimental_rerun()
-
     except:
         st.error(traceback.format_exc())
         st.stop()
+
+        # Await for 10 seconds
+        await asyncio.sleep(10)
+    
+    finally:
+        st.experimental_rerun()
 
 
 ### INITIALIZE AND LOAD ###
