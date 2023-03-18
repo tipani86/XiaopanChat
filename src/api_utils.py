@@ -2,6 +2,7 @@ import os
 import re
 import base64
 import asyncio
+import traceback
 from app_config import *
 
 
@@ -22,8 +23,8 @@ async def call_post_api_async(
                     return res
         except:
             if i == N_RETRIES - 1:
-                res['status'] = response.status
-                res['message'] = response.reason
+                res['status'] = 2
+                res['message'] = traceback.format_exc()
                 return res
             else:
                 await asyncio.sleep(COOLDOWN * BACKOFF ** i)
