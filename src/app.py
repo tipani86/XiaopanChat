@@ -155,8 +155,9 @@ async def main(human_prompt: str) -> dict:
                     os.getenv("OPENAI_API_KEY")
                 )
                 if prompt_res['status'] != 0:
-                    st.error(prompt_res['message'])
-                    st.stop()
+                    res['status'] = prompt_res['status']
+                    res['message'] = prompt_res['message']
+                    return res
 
                 chatbot_reply_res = await get_chatbot_reply_data_async(
                     httpclient,
@@ -164,8 +165,9 @@ async def main(human_prompt: str) -> dict:
                     os.getenv("OPENAI_API_KEY")
                 )
                 if chatbot_reply_res['status'] != 0:
-                    st.error(chatbot_reply_res['message'])
-                    st.stop()
+                    res['status'] = chatbot_reply_res['status']
+                    res['message'] = chatbot_reply_res['message']
+                    return res
 
                 reply_text = chatbot_reply_res['data']['reply_text']
                 languages = chatbot_reply_res['data']['language']
