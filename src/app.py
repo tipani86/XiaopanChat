@@ -119,7 +119,8 @@ def get_chat_message(
     return formatted_contents
 
 
-async def main(human_prompt):
+async def main(human_prompt: str) -> dict:
+    res = {'status': 0, 'message': "Success"}
     try:
         # Strip the prompt of any potentially harmful html/js injections
         human_prompt = human_prompt.replace("<", "&lt;").replace(">", "&gt;")
@@ -219,15 +220,10 @@ async def main(human_prompt):
         st.session_state.MEMORY.append({'role': "assistant", 'content': reply_text})
 
     except:
-        st.error(traceback.format_exc())
+        res['status'] = 2
+        res['message'] = traceback.format_exc()
 
-        # Await for 10 seconds
-        await asyncio.sleep(10)
-
-        st.stop()
-
-    finally:
-        st.experimental_rerun()
+    return res
 
 
 ### INITIALIZE AND LOAD ###
@@ -324,4 +320,11 @@ with prompt_box:
 # Gate the subsequent chatbot response to only when the user has entered a prompt
 if len(human_prompt) > 0:
 
-    asyncio.run(main(human_prompt))
+    run_res = asyncio.run(main(human_prompt))
+    if run_res['status'] == 0:
+        st.experimental_rerun()
+
+    else:
+        st.error(run_res['message'])
+        if st.button("Reload"):
+            st.experimental_rerun()
