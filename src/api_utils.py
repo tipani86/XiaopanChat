@@ -15,17 +15,18 @@ async def call_post_api_async(
 
     # Make an async post request to the API with timeout, retry, backoff etc.
     for i in range(N_RETRIES):
-        async with httpclient.post(url, headers=headers, json=data, timeout=TIMEOUT) as response:
-            if response.status == 200:
-                res['data'] = await response.json()
+        try:
+            async with httpclient.post(url, headers=headers, json=data, timeout=TIMEOUT) as response:
+                if response.status == 200:
+                    res['data'] = await response.json()
+                    return res
+        except:
+            if i == N_RETRIES - 1:
+                res['status'] = response.status
+                res['message'] = response.reason
                 return res
             else:
-                if i == N_RETRIES - 1:
-                    res['status'] = response.status
-                    res['message'] = response.reason
-                    return res
-                else:
-                    await asyncio.sleep(COOLDOWN * BACKOFF ** i)
+                await asyncio.sleep(COOLDOWN * BACKOFF ** i)
 
 
 async def generate_prompt_from_memory_async(
