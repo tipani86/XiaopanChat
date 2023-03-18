@@ -205,10 +205,11 @@ async def main(human_prompt):
             await asyncio.sleep(max(0, audio_play_time - (toc - tic)))
 
             # Stop and clear the audio stream from voicePlayer
-            components.html(f"""<script>
-                window.parent.document.voicePlayer.pause();
-                window.parent.document.voicePlayer.src = "";
-            </script>""", height=0, width=0)
+            if audio_play_time > 0 and len(b64) > 0:
+                components.html(f"""<script>
+                    window.parent.document.voicePlayer.pause();
+                    window.parent.document.voicePlayer.src = "";
+                </script>""", height=0, width=0)
 
         # Clear the writing animation
         writing_animation.empty()
