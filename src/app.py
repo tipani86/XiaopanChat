@@ -171,7 +171,7 @@ async def main(human_prompt):
 
             audio_play_time, audio_chars = 0, 0
             for item in languages:
-                if item['language'] == "zh" and item['isReliable']:
+                if item['language'] == "zh":
                     # Synthesize the response and play it as audio
                     audio_play_time, b64 = synthesize_text(reply_text, speech_cfg, azure_synthesizer, speechsdk)
                     audio_chars = len(reply_text)
@@ -220,10 +220,11 @@ async def main(human_prompt):
 
     except:
         st.error(traceback.format_exc())
-        st.stop()
 
         # Await for 10 seconds
         await asyncio.sleep(10)
+
+        st.stop()
 
     finally:
         st.experimental_rerun()
