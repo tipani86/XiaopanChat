@@ -193,7 +193,7 @@ async def main(human_prompt):
             if audio_chars > 0:
                 pause_per_char = 0.85 * audio_play_time / audio_chars  # 0.85 because we want the text to appear a bit faster than the audio
             else:
-                pause_per_char = 0.1
+                pause_per_char = 0.02
             tic = time.time()
             for i in range(len(reply_text)):
                 with reply_box.container():
@@ -223,7 +223,7 @@ async def main(human_prompt):
 
         # Await for 10 seconds
         await asyncio.sleep(10)
-    
+
     finally:
         st.experimental_rerun()
 
