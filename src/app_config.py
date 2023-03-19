@@ -5,7 +5,7 @@ DEBUG = True
 # Generic internet settings
 TIMEOUT = 30
 N_RETRIES = 3
-COOLDOWN = 2
+COOLDOWN = 5
 BACKOFF = 1.5
 
 
