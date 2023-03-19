@@ -187,7 +187,9 @@ async def main(human_prompt: str) -> dict:
             audio_play_time, audio_chars = 0, 0
             for item in languages:
                 if item['language'] == "zh":
-                    # Synthesize the response and play it as audio
+                    # Synthesize the response and play it as audio, except when the length is too much
+                    if len(reply_text) > MAX_SYNTHESIZE_TEXT_LENGTH:
+                        break
                     synth_res = synthesize_text(reply_text, speech_cfg, azure_synthesizer, speechsdk)
 
                     if DEBUG:
@@ -233,7 +235,7 @@ async def main(human_prompt: str) -> dict:
             await asyncio.sleep(max(0, audio_play_time - (toc - tic)))
 
             # Stop and clear the audio stream from voicePlayer
-            if audio_play_time > 0 and len(b64) > 0:
+            if audio_play_time > 0:
                 components.html(f"""<script>
                     window.parent.document.voicePlayer.pause();
                     window.parent.document.voicePlayer.src = "";
@@ -363,5 +365,6 @@ if len(human_prompt) > 0:
     else:
         if run_res['status'] != 0:
             st.error(run_res['message'])
-        if st.button("Reload"):
-            st.experimental_rerun()
+        with prompt_box:
+            if st.button("显示输入框"):
+                st.experimental_rerun()
