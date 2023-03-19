@@ -357,10 +357,11 @@ with prompt_box:
 if len(human_prompt) > 0:
 
     run_res = asyncio.run(main(human_prompt))
-    if run_res['status'] == 0:
+    if run_res['status'] == 0 and not DEBUG:
         st.experimental_rerun()
 
     else:
-        st.error(run_res['message'])
+        if run_res['status'] != 0:
+            st.error(run_res['message'])
         if st.button("Reload"):
             st.experimental_rerun()
