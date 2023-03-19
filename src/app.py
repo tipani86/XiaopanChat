@@ -273,6 +273,14 @@ for key in ["voice", "rate", "pitch"]:
         st.error(f"Key {key} not found in Azure Speech configuration file.")
         st.stop()
 
+# Get query parameters
+query_params = st.experimental_get_query_params()
+if "debug" in query_params and query_params["debug"][0].lower() == "true":
+    st.session_state.DEBUG = True
+
+if "DEBUG" in st.session_state and st.session_state.DEBUG:
+    DEBUG = True
+
 
 # Initialize some useful class instances
 with st.spinner("应用首次初始化中..."):
