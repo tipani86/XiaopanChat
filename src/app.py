@@ -154,6 +154,10 @@ async def main(human_prompt: str) -> dict:
                     st.session_state.MEMORY,
                     os.getenv("OPENAI_API_KEY")
                 )
+
+                if DEBUG:
+                    print("prompt_res: ", prompt_res)
+
                 if prompt_res['status'] != 0:
                     res['status'] = prompt_res['status']
                     res['message'] = prompt_res['message']
@@ -164,6 +168,10 @@ async def main(human_prompt: str) -> dict:
                     prompt_res['data']['messages'],
                     os.getenv("OPENAI_API_KEY")
                 )
+
+                if DEBUG:
+                    print("chatbot_reply_res: ", chatbot_reply_res)
+
                 if chatbot_reply_res['status'] != 0:
                     res['status'] = chatbot_reply_res['status']
                     res['message'] = chatbot_reply_res['message']
@@ -176,7 +184,18 @@ async def main(human_prompt: str) -> dict:
             for item in languages:
                 if item['language'] == "zh":
                     # Synthesize the response and play it as audio
-                    audio_play_time, b64 = synthesize_text(reply_text, speech_cfg, azure_synthesizer, speechsdk)
+                    synth_res = synthesize_text(reply_text, speech_cfg, azure_synthesizer, speechsdk)
+
+                    if DEBUG:
+                        print("synthesize_res: ", synth_res)
+
+                    if synth_res['status'] != 0:
+                        res['status'] = synth_res['status']
+                        res['message'] = synth_res['message']
+                        return res
+
+                    audio_play_time, b64 = synth_res['data']
+
                     audio_chars = len(reply_text)
                     if audio_play_time > 0 and len(b64) > 0:
                         # This part works in conjunction with the initialized script.js and puts the audio data into the audio player

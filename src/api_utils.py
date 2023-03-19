@@ -29,6 +29,10 @@ async def call_post_api_async(
             else:
                 await asyncio.sleep(COOLDOWN * BACKOFF ** i)
 
+    res['status'] = 1
+    res['message'] = f"Failed to call API after {N_RETRIES} retries."
+    return res
+
 
 async def generate_prompt_from_memory_async(
     httpclient,
@@ -200,7 +204,8 @@ def synthesize_text(
     config: dict,
     synthesizer,
     speechsdk
-) -> tuple:
+) -> dict:
+    res = {'status': 0, 'message': "success", 'data': None}
     # Clean up the text so it doesn't contain weird tokens
     CLEANR = re.compile('<.*?>|&([a-z0-9]+|#[0-9]{1,6}|#x[0-9a-f]{1,6});')
     text = re.sub(CLEANR, '', text)
@@ -228,15 +233,18 @@ def synthesize_text(
             </speak>
         """
     result = synthesizer.speak_ssml_async(ssml_string).get()
-    if DEBUG:
-        print(result)
     if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
         length = result.audio_duration.total_seconds()
         b64 = base64.b64encode(result.audio_data).decode()
-        return length, b64
+        res['data'] = (length, b64)
+        return res
     elif result.reason == speechsdk.ResultReason.Canceled:
         cancellation_details = result.cancellation_details
-        print(f"Speech synthesis canceled: {cancellation_details.reason}")
+        res['status'] = 2
+        res['message'] = f"Speech synthesis canceled: {cancellation_details.reason}"
         if cancellation_details.reason == speechsdk.CancellationReason.Error:
-            print(f"Error details: {cancellation_details.error_details}")
-    return 0, ""
+            res['message'] += f". Error details: {cancellation_details.error_details}"
+        return res
+    else:
+        res['data'] = (0, "")
+        return res
