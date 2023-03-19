@@ -156,7 +156,7 @@ async def main(human_prompt: str) -> dict:
                 )
 
                 if DEBUG:
-                    with debug_logs:
+                    with st.sidebar:
                         st.write("prompt_res: ")
                         st.json(prompt_res, expanded=False)
 
@@ -172,7 +172,7 @@ async def main(human_prompt: str) -> dict:
                 )
 
                 if DEBUG:
-                    with debug_logs:
+                    with st.sidebar:
                         st.write("chatbot_reply_res: ")
                         st.json(chatbot_reply_res, expanded=False)
 
@@ -193,7 +193,7 @@ async def main(human_prompt: str) -> dict:
                     synth_res = synthesize_text(reply_text, speech_cfg, azure_synthesizer, speechsdk)
 
                     if DEBUG:
-                        with debug_logs:
+                        with st.sidebar:
                             st.write("synth_res: ")
                             st.json(synth_res, expanded=False)
 
@@ -262,8 +262,7 @@ async def main(human_prompt: str) -> dict:
 favicon = get_favicon(os.path.join(ROOT_DIR, "src", "assets", "AI_icon.png"))
 st.set_page_config(
     page_title="小潘AI",
-    page_icon=favicon,
-    initial_sidebar_state="collapsed",
+    page_icon=favicon
 )
 
 
@@ -313,6 +312,11 @@ st.write("")
 prompt_box = st.empty()
 footer = st.container()
 
+if DEBUG:
+    with st.sidebar:
+        st.markdown("<p><small>Debug tools:</small></p>", unsafe_allow_html=True)
+        if st.button("Clear cache"):
+            st.cache_data.clear()
 
 # Load CSS code
 st.markdown(get_css(), unsafe_allow_html=True)
@@ -333,11 +337,6 @@ if "MEMORY" not in st.session_state:
 with footer:
     st.info("免责声明：聊天机器人基于海量互联网文本训练的大型语言模型，仅供娱乐。小潘AI不对信息的准确性、完整性、及时性等承担任何保证或责任。", icon="ℹ️")
     st.markdown(f"<p style='text-align: right'><small><i><font color=gray>Build: {build_date}</font></i></small></p>", unsafe_allow_html=True)
-    if DEBUG:
-        st.markdown("<p><small>Debug tools:</small></p>", unsafe_allow_html=True)
-        if st.button("Clear cache"):
-            st.cache_data.clear()
-        debug_logs = st.container()
 
 with chat_box:
     for i, line in enumerate(st.session_state.LOG[1:]):
