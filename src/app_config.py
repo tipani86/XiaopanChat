@@ -1,5 +1,5 @@
 # Debug switch
-DEBUG = True
+DEBUG = False
 
 
 # Generic internet settings

@@ -156,7 +156,9 @@ async def main(human_prompt: str) -> dict:
                 )
 
                 if DEBUG:
-                    print("prompt_res: ", prompt_res)
+                    with debug_logs:
+                        st.write("prompt_res: ")
+                        st.json(prompt_res, expanded=False)
 
                 if prompt_res['status'] != 0:
                     res['status'] = prompt_res['status']
@@ -170,7 +172,9 @@ async def main(human_prompt: str) -> dict:
                 )
 
                 if DEBUG:
-                    print("chatbot_reply_res: ", chatbot_reply_res)
+                    with debug_logs:
+                        st.write("chatbot_reply_res: ")
+                        st.json(chatbot_reply_res, expanded=False)
 
                 if chatbot_reply_res['status'] != 0:
                     res['status'] = chatbot_reply_res['status']
@@ -187,7 +191,9 @@ async def main(human_prompt: str) -> dict:
                     synth_res = synthesize_text(reply_text, speech_cfg, azure_synthesizer, speechsdk)
 
                     if DEBUG:
-                        print("synthesize_res: ", synth_res)
+                        with debug_logs:
+                            st.write("synth_res: ")
+                            st.json(synth_res, expanded=False)
 
                     if synth_res['status'] != 0:
                         res['status'] = synth_res['status']
@@ -321,6 +327,7 @@ with footer:
         st.markdown("<p><small>Debug tools:</small></p>", unsafe_allow_html=True)
         if st.button("Clear cache"):
             st.cache_data.clear()
+        debug_logs = st.container()
 
 with chat_box:
     for i, line in enumerate(st.session_state.LOG[1:]):
