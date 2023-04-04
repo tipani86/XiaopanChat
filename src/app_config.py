@@ -27,18 +27,3 @@ NLP_MODEL_PRESENCE_PENALTY = 1.0
 NLP_MODEL_STOP_WORDS = ["Human:", "AI:"]
 
 MAX_SYNTHESIZE_TEXT_LENGTH = 300
-
-expand_sidebar_script = """
-<script>
-    // Expand the sidebar
-    const streamlitDoc = window.parent.document
-    const buttons = streamlitDoc.getElementsByClassName('css-9s5bis edgvbvh3')
-    // Normally there are three buttons (so we press the index 1),
-    // but on Streamlit hosted service there are five buttons, so we press index 3)
-    if (buttons.length === 3) {
-        buttons[1].click()
-    } else if (buttons.length === 5) {
-        buttons[3].click()
-    }
-</script>
-"""

@@ -263,7 +263,6 @@ favicon = get_favicon(os.path.join(ROOT_DIR, "src", "assets", "AI_icon.png"))
 st.set_page_config(
     page_title="小潘AI",
     page_icon=favicon,
-    initial_sidebar_state="collapsed"
 )
 
 
@@ -319,11 +318,6 @@ if DEBUG:
         if st.button("Clear cache"):
             st.cache_data.clear()
 
-with st.sidebar:
-    st.header("感谢您对小潘AI的支持！")
-    st.image(os.path.join(ROOT_DIR, "src", "assets", "wechat_pay.png"), width=200)
-    st.image(os.path.join(ROOT_DIR, "src", "assets", "alipay.png"), width=200)
-
     # Load CSS code
 st.markdown(get_css(), unsafe_allow_html=True)
 
@@ -343,11 +337,11 @@ if "MEMORY" not in st.session_state:
 with footer:
     st.info("免责声明：聊天机器人基于海量互联网文本训练的大型语言模型，仅供娱乐。小潘AI不对信息的准确性、完整性、及时性等承担任何保证或责任。", icon="ℹ️")
     st.success("小潘AI背后调用的是OpenAI的GPT4付费模型接口。但我们依然想给国内的开发者与其他用户提供无门槛服务。如果您感觉小潘AI对你带来了价值，我们非常欢迎您的捐赠。")
-    show_payments = st.button("显示支付选项", key="show_payments")
+    with st.expander("显示支付选项"):
+        st.image(os.path.join(ROOT_DIR, "src", "assets", "wechat_pay.png"), width=200)
+        st.image(os.path.join(ROOT_DIR, "src", "assets", "alipay.png"), width=200)
     st.markdown(f"<p style='text-align: right'><small><i><font color=gray>Build: {build_date}</font></i></small></p>", unsafe_allow_html=True)
 
-if show_payments:
-    components.html(expand_sidebar_script, height=0, width=0)
 
 with chat_box:
     for i, line in enumerate(st.session_state.LOG[1:]):
