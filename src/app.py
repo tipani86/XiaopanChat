@@ -336,13 +336,13 @@ if "MEMORY" not in st.session_state:
 # Render footer
 with footer:
     st.info("免责声明：聊天机器人基于海量互联网文本训练的大型语言模型，仅供娱乐。小潘AI不对信息的准确性、完整性、及时性等承担任何保证或责任。", icon="ℹ️")
-    st.success("小潘AI背后调用的是OpenAI的GPT4付费模型接口。但我们依然想给国内的开发者与其他用户提供无门槛服务。如果您感觉小潘AI对你带来了价值，我们非常欢迎您的捐赠。")
-    with st.expander("显示支付选项"):
+    st.success("小潘AI背后调用的是OpenAI的GPT4付费模型接口。但我们依然想给国内的开发者与其他用户提供无门槛服务。如果您感觉小潘AI对你带来了价值，我们非常欢迎您的捐赠，感谢🙏！")
+    with st.expander("显示支付码"):
         left_col, right_col = st.columns(2, gap="medium")
         with left_col:
-            st.image(os.path.join(ROOT_DIR, "src", "assets", "wechat_pay.png"))
-        with right_col:
             st.image(os.path.join(ROOT_DIR, "src", "assets", "alipay.png"))
+        with right_col:
+            st.image(os.path.join(ROOT_DIR, "src", "assets", "wechat_pay.png"))
     st.markdown(f"<p style='text-align: right'><small><i><font color=gray>Build: {build_date}</font></i></small></p>", unsafe_allow_html=True)
 
 
