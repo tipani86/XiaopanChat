@@ -23,7 +23,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 errors = []
 for key in [
-    "OPENAI_API_KEY", "OPENAI_ORG_ID",  # For OpenAI APIs
+    "OPENAI_API_KEY",                   # For OpenAI APIs
     "AZURE_SPEECH_KEY",                 # For Azure Speech APIs
     "RAPID_API_KEY",                    # For Rapid APIs
 ]:
