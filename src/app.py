@@ -1,17 +1,10 @@
 import os
-import time
-import json
 import base64
-import aiohttp
-import traceback
 import subprocess
 from PIL import Image
 import streamlit as st
 from api_utils import *
 from app_config import *
-from transformers import AutoTokenizer
-import streamlit.components.v1 as components
-import azure.cognitiveservices.speech as speechsdk
 
 # Set global variables
 
