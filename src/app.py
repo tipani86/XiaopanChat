@@ -78,7 +78,8 @@ st.markdown(get_css(), unsafe_allow_html=True)
 
 # Render footer
 with footer:
-    st.info("暂停GPT-4对外公开服务的通知：亲爱的小潘AI用户，您好！因GPT-4模型成本实在过高，打赏金额远远支撑不了API接口调用的费用，我们不得不暂停GPT-4模型无条件对外公开的服务。同时，我们依然欢迎您使用基于GPT-3.5-Turbo（ChatGPT大众版）模型的服务：**chat.xiaopan.ai**", icon="ℹ️")
+    st.info("暂停GPT-4对外公开服务的通知：亲爱的小潘AI用户，您好！因GPT-4模型成本实在过高，打赏金额远远支撑不了API接口调用的费用，我们不得不暂停GPT-4模型无条件对外公开的服务。同时，我们依然欢迎您使用基于GPT-3.5-Turbo（ChatGPT大众版）模型的服务（链接如下）：", icon="ℹ️")
+    st.markdown("<a href='https://chat.xiaopan.ai' target='_blank'>https://chat.xiaopan.ai</a>", unsafe_allow_html=True)
     st.markdown("如果您想加入小潘AI未来推出基于GPT-4模型的产品或服务的**候补名单**，第一时间了解我们的新产品，请扫码留下您的信息，非常感谢！")
     st.image(os.path.join(ROOT_DIR, "src", "assets", "waitlist.jpg"), width=200)
     st.markdown(f"<p style='text-align: right'><small><i><font color=gray>Build: {build_date}</font></i></small></p>", unsafe_allow_html=True)
