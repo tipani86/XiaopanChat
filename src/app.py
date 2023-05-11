@@ -1,7 +1,7 @@
 import os
-import time
 import json
 import base64
+import openai
 import aiohttp
 import traceback
 import subprocess
