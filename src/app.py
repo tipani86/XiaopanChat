@@ -164,10 +164,13 @@ async def main(human_prompt: str) -> dict:
                     res['status'] = prompt_res['status']
                     res['message'] = prompt_res['message']
                     return res
+                
+                # Update memory with the latest prompt
+                st.session_state.MEMORY = prompt_res['data']['messages']
 
                 chatbot_reply_res = await get_chatbot_reply_data_async(
                     httpclient,
-                    prompt_res['data']['messages'],
+                    st.session_state.MEMORY,
                     os.getenv("OPENAI_API_KEY")
                 )
 
