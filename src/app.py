@@ -164,82 +164,33 @@ async def main(human_prompt: str) -> dict:
                     res['status'] = prompt_res['status']
                     res['message'] = prompt_res['message']
                     return res
+            
+            # Refresh memory from the prompt response
+            st.session_state.MEMORY = prompt_res['data']['messages']
 
-                chatbot_reply_res = await get_chatbot_reply_data_async(
-                    httpclient,
-                    prompt_res['data']['messages'],
-                    os.getenv("OPENAI_API_KEY")
-                )
+            # Call the OpenAI ChatGPT API for final result
+            reply_text = ""
+            async for chunk in await openai.ChatCompletion.acreate(
+                model=NLP_MODEL_NAME,
+                messages=st.session_state.MEMORY,
+                temperature=NLP_MODEL_TEMPERATURE,
+                max_tokens=NLP_MODEL_REPLY_MAX_TOKENS,
+                frequency_penalty=NLP_MODEL_FREQUENCY_PENALTY,
+                presence_penalty=NLP_MODEL_PRESENCE_PENALTY,
+                stop=NLP_MODEL_STOP_WORDS,
+                stream=True,
+                timeout=TIMEOUT,
+            ):
+                content = chunk["choices"][0].get("delta", {}).get("content", None)
+                if content is not None:
+                    reply_text += content
 
-                if DEBUG:
-                    with st.sidebar:
-                        st.write("chatbot_reply_res: ")
-                        st.json(chatbot_reply_res, expanded=False)
+                    # Sanitizing output
+                    if reply_text.startswith("AI: "):
+                        reply_text = reply_text.split("AI: ", 1)[1]
 
-                if chatbot_reply_res['status'] != 0:
-                    res['status'] = chatbot_reply_res['status']
-                    res['message'] = chatbot_reply_res['message']
-                    return res
-
-                reply_text = chatbot_reply_res['data']['reply_text']
-                languages = chatbot_reply_res['data']['language']
-
-            audio_play_time, audio_chars = 0, 0
-            for item in languages:
-                if item['language'] == "zh":
-                    # Synthesize the response and play it as audio, except when the length is too much
-                    if len(reply_text) > MAX_SYNTHESIZE_TEXT_LENGTH:
-                        break
-                    synth_res = synthesize_text(reply_text, speech_cfg, azure_synthesizer, speechsdk)
-
-                    if DEBUG:
-                        with st.sidebar:
-                            st.write("synth_res: ")
-                            st.json(synth_res, expanded=False)
-
-                    if synth_res['status'] != 0:
-                        res['status'] = synth_res['status']
-                        res['message'] = synth_res['message']
-                        return res
-
-                    audio_play_time, b64 = synth_res['data']
-
-                    audio_chars = len(reply_text)
-                    if audio_play_time > 0 and len(b64) > 0:
-                        # This part works in conjunction with the initialized script.js and puts the audio data into the audio player
-                        components.html(f"""<script>
-                            window.parent.document.voicePlayer.src = "data:audio/mp3;base64,{b64}";
-                            window.parent.document.voicePlayer.pause();
-                            window.parent.document.voicePlayer.currentTime = 0;
-                            // Wait for 0.5 seconds and play
-                            setTimeout(() => {{
-                                window.parent.document.voicePlayer.play();
-                            }}, 1000);
-                        </script>""", height=0, width=0)
-                        audio_play_time += 1.0  # To account for slight delay in the beginning of the audio
-                    break
-
-            # Loop so that reply_text gets revealed one character at a time
-            if audio_chars > 0:
-                pause_per_char = 0.85 * audio_play_time / audio_chars  # 0.85 because we want the text to appear a bit faster than the audio
-            else:
-                pause_per_char = 0.02
-            tic = time.time()
-            for i in range(len(reply_text)):
-                with reply_box.container():
-                    st.markdown(get_chat_message(reply_text[:i+1]), unsafe_allow_html=True)
-                    await asyncio.sleep(pause_per_char)
-            toc = time.time()
-
-            # Pause for the remaining time, if any
-            await asyncio.sleep(max(0, audio_play_time - (toc - tic)))
-
-            # Stop and clear the audio stream from voicePlayer
-            if audio_play_time > 0:
-                components.html(f"""<script>
-                    window.parent.document.voicePlayer.pause();
-                    window.parent.document.voicePlayer.src = "";
-                </script>""", height=0, width=0)
+                    # Continuously render the reply as it comes in
+                    reply_box.markdown(get_chat_message(reply_text), unsafe_allow_html=True)
 
         # Clear the writing animation
         writing_animation.empty()
@@ -261,7 +212,7 @@ async def main(human_prompt: str) -> dict:
 # Initialize page config
 favicon = get_favicon(os.path.join(ROOT_DIR, "src", "assets", "AI_icon.png"))
 st.set_page_config(
-    page_title="小潘AI",
+    page_title="Chat Assistant",
     page_icon=favicon,
 )
 
@@ -284,7 +235,7 @@ if "DEBUG" in st.session_state and st.session_state.DEBUG:
 
 
 # Initialize some useful class instances
-with st.spinner("应用首次初始化中..."):
+with st.spinner("Initializing App..."):
     TOKENIZER = get_tokenizer()  # First time after deployment takes a few seconds
 azure_synthesizer = get_synthesizer(speech_cfg)
 
@@ -304,8 +255,8 @@ else:
 
 
 # Define main layout
-st.title("你好，")
-st.subheader("我是小潘AI，来跟我说点什么吧！")
+st.title("Hello!")
+st.subheader("I am your AI assistant. How can I help you today?")
 st.subheader("")
 chat_box = st.container()
 st.write("")
@@ -334,9 +285,9 @@ if "MEMORY" not in st.session_state:
 
 
 # Render footer
-with footer:
-    st.info("免责声明：聊天机器人基于海量互联网文本训练的大型语言模型，仅供娱乐。小潘AI不对信息的准确性、完整性、及时性等承担任何保证或责任。", icon="ℹ️")
-    st.markdown(f"<p style='text-align: right'><small><i><font color=gray>Build: {build_date}</font></i></small></p>", unsafe_allow_html=True)
+# with footer:
+#     st.info("免责声明：聊天机器人基于海量互联网文本训练的大型语言模型，仅供娱乐。小潘AI不对信息的准确性、完整性、及时性等承担任何保证或责任。", icon="ℹ️")
+#     st.markdown(f"<p style='text-align: right'><small><i><font color=gray>Build: {build_date}</font></i></small></p>", unsafe_allow_html=True)
 
 
 with chat_box:
@@ -353,7 +304,7 @@ with chat_box:
 
 # Define an input box for human prompts
 with prompt_box:
-    human_prompt = st.text_input("请输入:", value="", key=f"text_input_{len(st.session_state.LOG)}")
+    human_prompt = st.text_input("Enter:", value="", key=f"text_input_{len(st.session_state.LOG)}")
 
 # Gate the subsequent chatbot response to only when the user has entered a prompt
 if len(human_prompt) > 0:
@@ -366,5 +317,5 @@ if len(human_prompt) > 0:
         if run_res['status'] != 0:
             st.error(run_res['message'])
         with prompt_box:
-            if st.button("显示输入框"):
+            if st.button("Show text input box"):
                 st.experimental_rerun()
