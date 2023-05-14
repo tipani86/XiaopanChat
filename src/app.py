@@ -23,9 +23,9 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 errors = []
 for key in [
-    "OPENAI_API_KEY",                   # For OpenAI APIs
-    "AZURE_SPEECH_KEY",                 # For Azure Speech APIs
-    "RAPID_API_KEY",                    # For Rapid APIs
+    "OPENAI_API_KEY", "OPENAI_API_BASE", "OPENAI_API_TYPE", # For OpenAI APIs
+    "AZURE_SPEECH_KEY",                                     # For Azure Speech APIs
+    "RAPID_API_KEY",                                        # For Rapid APIs
 ]:
     if key not in os.environ:
         errors.append(f"Please set the {key} environment variable.")
