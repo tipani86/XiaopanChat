@@ -10,8 +10,8 @@ from app_config import *
 async def call_post_api_async(
     httpclient,
     url: str,
-    headers: dict | None = None,
-    data: dict | None = None,
+    headers: dict = None,
+    data: dict = None,
 ) -> dict:
     res = {'status': 0, 'message': 'success', 'data': None}
 
@@ -126,7 +126,7 @@ def synthesize_text(
 async def get_chatbot_reply_async(
     messages: list,
     model: str = NLP_MODEL_NAME,
-    engine: str | None = NLP_MODEL_ENGINE,
+    engine: str = NLP_MODEL_ENGINE,
     temperature: float = NLP_MODEL_TEMPERATURE,
     max_tokens: int = NLP_MODEL_REPLY_MAX_TOKENS,
     frequency_penalty: float = NLP_MODEL_FREQUENCY_PENALTY,
