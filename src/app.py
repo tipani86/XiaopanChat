@@ -5,9 +5,9 @@ import base64
 import aiohttp
 import traceback
 import subprocess
+from utils import *
 from PIL import Image
 import streamlit as st
-from api_utils import *
 from app_config import *
 from transformers import AutoTokenizer
 import streamlit.components.v1 as components
@@ -147,53 +147,56 @@ async def main(human_prompt: str) -> dict:
             writing_animation.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;<img src='data:image/gif;base64,{get_local_img(file_path)}' width=30 height=10>", unsafe_allow_html=True)
 
             # Main process
-            async with aiohttp.ClientSession() as httpclient:
-                prompt_res = await generate_prompt_from_memory_async(
-                    httpclient,
-                    TOKENIZER,
-                    st.session_state.MEMORY,
-                    os.getenv("OPENAI_API_KEY")
-                )
+            prompt_res = await generate_prompt_from_memory_async(
+                TOKENIZER,
+                st.session_state.MEMORY
+            )
 
-                if DEBUG:
-                    with st.sidebar:
-                        st.write("prompt_res: ")
-                        st.json(prompt_res, expanded=False)
+            if DEBUG:
+                with st.sidebar:
+                    st.write("prompt_res")
+                    st.json(prompt_res, expanded=False)
 
-                if prompt_res['status'] != 0:
-                    res['status'] = prompt_res['status']
-                    res['message'] = prompt_res['message']
-                    return res
-                
-                # Update memory with the latest prompt
-                st.session_state.MEMORY = prompt_res['data']['messages']
+            if prompt_res['status'] != 0:
+                res['status'] = prompt_res['status']
+                res['message'] = prompt_res['message']
+                return res
 
-                chatbot_reply_res = await get_chatbot_reply_data_async(
-                    httpclient,
-                    st.session_state.MEMORY,
-                    os.getenv("OPENAI_API_KEY")
-                )
+            # Update the memory from prompt res
+            st.session_state.MEMORY = prompt_res['data']['messages']
 
-                if DEBUG:
-                    with st.sidebar:
-                        st.write("chatbot_reply_res: ")
-                        st.json(chatbot_reply_res, expanded=False)
+            # Call the OpenAI ChatGPT API
+            chatbot_response = await get_chatbot_reply_async(
+                st.session_state.MEMORY
+            )
 
-                if chatbot_reply_res['status'] != 0:
-                    res['status'] = chatbot_reply_res['status']
-                    res['message'] = chatbot_reply_res['message']
-                    return res
+            if DEBUG:
+                with st.sidebar:
+                    st.write("chatbot_response: ")
+                    st.write(chatbot_response)
+                    
+            async with aiohttp.ClientSession() as session:
+                language_res = await detect_language_async(session, chatbot_response)
 
-                reply_text = chatbot_reply_res['data']['reply_text']
-                languages = chatbot_reply_res['data']['language']
+            if DEBUG:
+                with st.sidebar:
+                    st.write("language_res: ")
+                    st.json(language_res, expanded=False)
+
+            if language_res['status'] != 0:
+                res['status'] = language_res['status']
+                res['message'] = language_res['message']
+                return res
+            
+            languages = language_res['data']
 
             audio_play_time, audio_chars = 0, 0
             for item in languages:
                 if item['language'] == "zh":
                     # Synthesize the response and play it as audio, except when the length is too much
-                    if len(reply_text) > MAX_SYNTHESIZE_TEXT_LENGTH:
+                    if len(chatbot_response) > MAX_SYNTHESIZE_TEXT_LENGTH:
                         break
-                    synth_res = synthesize_text(reply_text, speech_cfg, azure_synthesizer, speechsdk)
+                    synth_res = synthesize_text(chatbot_response, speech_cfg, azure_synthesizer, speechsdk)
 
                     if DEBUG:
                         with st.sidebar:
@@ -207,7 +210,7 @@ async def main(human_prompt: str) -> dict:
 
                     audio_play_time, b64 = synth_res['data']
 
-                    audio_chars = len(reply_text)
+                    audio_chars = len(chatbot_response)
                     if audio_play_time > 0 and len(b64) > 0:
                         # This part works in conjunction with the initialized script.js and puts the audio data into the audio player
                         components.html(f"""<script>
@@ -228,9 +231,9 @@ async def main(human_prompt: str) -> dict:
             else:
                 pause_per_char = 0.02
             tic = time.time()
-            for i in range(len(reply_text)):
+            for i in range(len(chatbot_response)):
                 with reply_box.container():
-                    st.markdown(get_chat_message(reply_text[:i+1]), unsafe_allow_html=True)
+                    st.markdown(get_chat_message(chatbot_response[:i+1]), unsafe_allow_html=True)
                     await asyncio.sleep(pause_per_char)
             toc = time.time()
 
@@ -248,8 +251,8 @@ async def main(human_prompt: str) -> dict:
         writing_animation.empty()
 
         # Update the chat LOG and memories with the actual response
-        st.session_state.LOG.append(f"AI: {reply_text}")
-        st.session_state.MEMORY.append({'role': "assistant", 'content': reply_text})
+        st.session_state.LOG.append(f"AI: {chatbot_response}")
+        st.session_state.MEMORY.append({'role': "assistant", 'content': chatbot_response})
 
     except:
         res['status'] = 2
