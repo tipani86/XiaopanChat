@@ -1,5 +1,5 @@
-openai
 aiohttp
 streamlit
+openai<1.0
 transformers
 azure-cognitiveservices-speech==1.21.0
